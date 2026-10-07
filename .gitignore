@@ -1,0 +1,16 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# GitHub Pages 用に組み立てたサイト（build_site.py で作る）
+_site/
+
+# 手元の設定・OS のファイル
+.claude/
+.DS_Store
+graph.png
+graph.svg
+graph.pdf
+graph.py

@@ -1,0 +1,598 @@
+/* =========================================================
+   デザイン: 白と黒だけのエディトリアルなスタイル
+   （添付のデザイントークン tokens.json / variables.css に準拠）
+   ========================================================= */
+:root {
+  /* Colors */
+  --color-obsidian: #000000;
+  --color-graphite: #666666;
+  --color-smoke: #8f8f8f;
+  --color-paper: #ffffff;
+  --color-ash: #f1f1f1;
+  --color-hairline: #0000001f;
+  --color-whisper: #0000000a;
+  --color-error: #b3261e;   /* エラー表示だけに使う（機能上必要な色） */
+
+  /* Typography */
+  --font-sans: "OpenAI Sans", "Inter", ui-sans-serif, -apple-system, BlinkMacSystemFont,
+    "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Segoe UI", "Yu Gothic", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --text-caption: 13px;
+  --tracking-caption: -0.13px;
+  --text-ui: 14px;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+
+  /* Spacing */
+  --spacing-4: 4px;
+  --spacing-8: 8px;
+  --spacing-12: 12px;
+  --spacing-16: 16px;
+  --spacing-20: 20px;
+  --spacing-24: 24px;
+  --spacing-32: 32px;
+
+  /* Radius */
+  --radius-cards: 6px;
+  --radius-full: 9999px;
+
+  /* Shadows（ボタンのホバー時だけ） */
+  --shadow-sm: rgba(0, 0, 0, 0.02) 0px 4px 6px 0px, rgba(0, 0, 0, 0.05) 0px 0px 2px 0px;
+
+  /* Motion（ゆっくり始まり，すっと止まる曲線） */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 150ms;
+  --dur-base: 300ms;
+  --dur-slow: 600ms;
+
+  /* コードブロック（チャット画面のコード表示に近い配色） */
+  --code-bg: #0d0d0d;
+  --code-head: #2f2f2f;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-feature-settings: "calt" on, "liga" on;
+  font-size: var(--text-ui);
+  letter-spacing: -0.01em;
+  color: var(--color-obsidian);
+  background: var(--color-paper);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+::selection { background: var(--color-obsidian); color: var(--color-paper); }
+
+/* =========================================================
+   上部バー（境界線なし．余白だけで区切る）
+   ========================================================= */
+.topbar {
+  height: 60px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-16);
+  padding: 0 var(--spacing-24);
+}
+.brand { display: flex; align-items: center; gap: var(--spacing-8); flex: none; white-space: nowrap; }
+.brand-mark {
+  flex: none;
+  width: 14px; height: 14px;
+  border-radius: var(--radius-full);
+  background: var(--color-obsidian);
+  animation: breathe 3.2s var(--ease-in-out) infinite;
+}
+.brand-name { font-size: 15px; font-weight: var(--font-weight-semibold); letter-spacing: -0.02em; }
+.brand-sub { font-size: var(--text-caption); color: var(--color-graphite); font-weight: var(--font-weight-medium); }
+
+.status {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-8);
+  font-size: var(--text-caption);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-graphite);
+}
+.status-dot {
+  width: 7px; height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--color-hairline);
+  transition: background var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
+}
+.status.busy .status-dot { background: var(--color-obsidian); animation: pulse-dot 1.1s var(--ease-in-out) infinite; }
+.status.busy #status-text { animation: shimmer-text 1.6s linear infinite; }
+.status.done .status-dot { background: var(--color-obsidian); }
+.status.error { color: var(--color-error); }
+.status.error .status-dot { background: var(--color-error); }
+
+/* =========================================================
+   3 列レイアウト（カードの箱ではなく，細い区切り線で分ける）
+   ========================================================= */
+.layout {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(320px, 1.6fr) 300px;
+  border-top: 1px solid var(--color-hairline);
+}
+.pane {
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  padding: var(--spacing-20) var(--spacing-24);
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-hairline) transparent;
+}
+.pane + .pane { border-left: 1px solid var(--color-hairline); }
+
+.section-label {
+  font-size: var(--text-caption);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-graphite);
+  letter-spacing: var(--tracking-caption);
+  margin: 0 0 var(--spacing-8);
+}
+.hint {
+  color: var(--color-graphite);
+  font-size: var(--text-caption);
+  line-height: 1.51;
+  margin: 0 0 var(--spacing-12);
+}
+
+/* =========================================================
+   ボタン（すべてピル型）
+   ========================================================= */
+button {
+  font: inherit;
+  font-size: var(--text-caption);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: 0;
+  line-height: 1;
+  padding: 8px 14px;
+  border-radius: var(--radius-full);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-obsidian);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+button:active { transform: scale(0.97); }
+button:focus-visible { outline: 2px solid var(--color-obsidian); outline-offset: 2px; }
+
+/* 枠線ピル（ふだんのボタン） */
+button.pill { border-color: var(--color-hairline); }
+button.pill:hover { background: var(--color-whisper); box-shadow: var(--shadow-sm); }
+button.pill.active {
+  border-color: var(--color-obsidian);
+  background: var(--color-whisper);
+}
+
+/* ゴースト（いちばん控えめ） */
+button.ghost:hover { background: var(--color-whisper); }
+
+/* 塗りつぶし（画面で 1 つだけ：PNG を保存） */
+button.primary {
+  background: var(--color-obsidian);
+  color: var(--color-paper);
+  padding: 9px 20px;
+}
+button.primary:hover { background: #2b2b2b; }
+
+.toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 var(--spacing-12); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: var(--spacing-8); }
+.btn-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacing-8); margin-top: var(--spacing-16); }
+
+/* =========================================================
+   入力欄（ピル型）
+   ========================================================= */
+input[type=text], input[type=number], select {
+  font: inherit;
+  font-size: var(--text-caption);
+  font-weight: var(--font-weight-regular);
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-full);
+  background: var(--color-paper);
+  color: var(--color-obsidian);
+  width: 100%;
+  min-width: 0;
+  outline: none;
+  transition: border-color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
+}
+select {
+  appearance: none;
+  padding-right: 28px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238f8f8f' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+}
+input::placeholder { color: var(--color-smoke); }
+input[type=text]:hover, input[type=number]:hover, select:hover { border-color: rgba(0, 0, 0, 0.24); }
+input[type=text]:focus, input[type=number]:focus, select:focus { border-color: var(--color-obsidian); }
+input:disabled, select:disabled { color: var(--color-smoke); background-color: var(--color-ash); border-color: transparent; cursor: not-allowed; }
+input[type=checkbox] { accent-color: var(--color-obsidian); width: 14px; height: 14px; margin: 0; }
+input[type=color] {
+  width: 32px; height: 32px; padding: 3px;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-full);
+  background: var(--color-paper);
+  cursor: pointer;
+}
+input[type=color]::-webkit-color-swatch-wrapper { padding: 0; }
+input[type=color]::-webkit-color-swatch { border: none; border-radius: var(--radius-full); }
+
+/* =========================================================
+   データ表
+   ========================================================= */
+.pane-data { display: flex; flex-direction: column; }
+.table-wrap {
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-cards);
+}
+#grid { border-collapse: separate; border-spacing: 0; font-size: var(--text-caption); }
+#grid th, #grid td {
+  border-right: 1px solid var(--color-hairline);
+  border-bottom: 1px solid var(--color-hairline);
+  padding: 0;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+#grid thead th { position: sticky; top: 0; background: var(--color-paper); z-index: 1; }
+#grid .rownum {
+  color: var(--color-smoke);
+  font-weight: var(--font-weight-regular);
+  min-width: 34px;
+  text-align: center;
+  font-size: 11px;
+  padding: 0 6px;
+  font-variant-numeric: tabular-nums;
+}
+#grid .colname {
+  display: block;
+  color: var(--color-smoke);
+  font-size: 11px;
+  font-weight: var(--font-weight-medium);
+  padding-top: 6px;
+  letter-spacing: 0.02em;
+}
+#grid input {
+  width: 96px;
+  border: none;
+  padding: 7px 10px;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  background: transparent;
+  outline: none;
+  text-align: right;
+  color: var(--color-obsidian);
+}
+#grid thead input { text-align: center; font-weight: var(--font-weight-medium); padding-bottom: 8px; }
+#grid tbody tr:hover td, #grid tbody tr:hover .rownum { background: var(--color-whisper); }
+#grid td:focus-within, #grid th:focus-within { box-shadow: inset 0 0 0 1.5px var(--color-obsidian); }
+#grid input.invalid { color: var(--color-error); background: rgba(179, 38, 30, 0.06); }
+#grid tr.current .rownum { color: var(--color-obsidian); font-weight: var(--font-weight-medium); }
+
+/* =========================================================
+   プレビュー
+   ========================================================= */
+.pane-preview { display: flex; flex-direction: column; gap: var(--spacing-12); }
+.preview-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--spacing-12); }
+.preview-head .section-label { margin: 0; white-space: nowrap; }
+.preview-info { color: var(--color-smoke); font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; }
+.preview-box {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-24);
+  border-radius: var(--radius-cards);
+  border: 1px solid var(--color-hairline);
+  background: var(--color-paper);
+  overflow: hidden;
+}
+.preview-box.transparent {
+  background-color: #fff;
+  background-image:
+    linear-gradient(45deg, #ececec 25%, transparent 25%), linear-gradient(-45deg, #ececec 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #ececec 75%), linear-gradient(-45deg, transparent 75%, #ececec 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+#preview {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 2px;
+  outline: 1px solid var(--color-hairline);
+  opacity: 0;
+}
+#preview.shown { opacity: 1; }
+#preview.reveal-img { animation: image-reveal 520ms var(--ease-out) both; }
+
+/* 描画中は，プレビューの上を光の帯が横切る */
+.preview-shimmer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.65) 50%, transparent 70%);
+  background-size: 250% 100%;
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+.preview-box.loading .preview-shimmer { opacity: 1; animation: sweep 1.4s linear infinite; }
+.preview-box.loading #preview { filter: saturate(0.6) blur(0.6px); transition: filter var(--dur-base) var(--ease-out); }
+
+.messages { max-height: 30%; overflow: auto; flex: none; display: flex; flex-direction: column; gap: 6px; }
+.messages:empty { display: none; }
+.messages div {
+  font-size: var(--text-caption);
+  line-height: 1.51;
+  padding: 8px 14px;
+  border-radius: var(--radius-cards);
+  border: 1px solid var(--color-hairline);
+  animation: rise var(--dur-base) var(--ease-out) both;
+}
+.messages .error { color: var(--color-error); border-color: rgba(179, 38, 30, 0.25); }
+.messages .warn { color: var(--color-graphite); background: var(--color-whisper); }
+.messages .info { color: var(--color-obsidian); }
+
+/* =========================================================
+   設定パネル
+   ========================================================= */
+.pane-settings { padding-top: var(--spacing-8); }
+details { border-bottom: 1px solid var(--color-hairline); padding: 4px 0 var(--spacing-16); }
+details:last-child { border-bottom: none; }
+summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--text-ui);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  user-select: none;
+  padding: var(--spacing-12) 0 var(--spacing-4);
+  border-radius: 4px;
+}
+summary::-webkit-details-marker { display: none; }
+summary::after {
+  content: "";
+  width: 8px; height: 8px;
+  border-right: 1.3px solid var(--color-smoke);
+  border-bottom: 1.3px solid var(--color-smoke);
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform var(--dur-base) var(--ease-out);
+  margin-right: 4px;
+}
+details[open] > summary::after { transform: translateY(2px) rotate(225deg); }
+summary:focus-visible { outline: 2px solid var(--color-obsidian); outline-offset: 2px; }
+/* 開いたときに中身がふわっと現れる */
+details[open] > :not(summary) { animation: rise 420ms var(--ease-out) both; }
+
+.pane-settings label {
+  display: block;
+  color: var(--color-graphite);
+  font-size: 12px;
+  font-weight: var(--font-weight-medium);
+  margin: var(--spacing-12) 0 var(--spacing-4);
+}
+.pane-settings label > input, .pane-settings label > select { margin-top: 6px; }
+.pane-settings .check {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-8);
+  color: var(--color-obsidian);
+  font-size: var(--text-caption);
+  font-weight: var(--font-weight-regular);
+  margin: var(--spacing-12) 0 6px;
+  cursor: pointer;
+}
+.pane-settings .check > input { margin: 0; }
+.pane-settings .check.align-end { margin-top: 30px; }
+.pane-settings .spaced { margin-top: var(--spacing-24); }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 var(--spacing-8); }
+.grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0 6px; }
+.sub-hint { color: var(--color-smoke); font-size: 12px; margin: 6px 0 0; line-height: 1.45; }
+.sub-hint:empty { display: none; }
+.sub-hint.warn { color: var(--color-graphite); }
+.sub-hint.warn::before { content: "● "; color: var(--color-obsidian); font-size: 8px; vertical-align: 2px; }
+
+.series-card {
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-cards);
+  padding: var(--spacing-12);
+  margin-top: var(--spacing-12);
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.series-card:hover, .series-card:focus-within { border-color: rgba(0, 0, 0, 0.24); }
+.series-card .series-name { font-weight: var(--font-weight-medium); font-size: var(--text-caption); display: flex; align-items: center; gap: var(--spacing-8); }
+.series-card .series-name input[type=color] { flex: none; width: 24px; height: 24px; padding: 2px; }
+.series-card label { margin-top: var(--spacing-8) !important; }
+
+/* =========================================================
+   下：Python コード
+   ========================================================= */
+.code-panel { flex: none; border-top: 1px solid var(--color-hairline); background: var(--color-paper); }
+.code-bar { display: flex; align-items: center; gap: var(--spacing-12); padding: 8px var(--spacing-16); }
+.code-bar .sub-hint { margin: 0; }
+.code-bar .tab { font-size: var(--text-ui); display: inline-flex; align-items: center; gap: var(--spacing-8); }
+.chevron {
+  width: 7px; height: 7px;
+  border-right: 1.3px solid var(--color-obsidian);
+  border-bottom: 1.3px solid var(--color-obsidian);
+  transform: translateY(2px) rotate(225deg);
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.code-panel.open .chevron { transform: translateY(-2px) rotate(45deg); }
+
+.code-body {
+  height: 0;
+  overflow: hidden;
+  padding: 0 var(--spacing-16);
+  transition: height 420ms var(--ease-out), padding 420ms var(--ease-out);
+}
+.code-panel.open .code-body { height: 40vh; padding-bottom: var(--spacing-16); }
+.code-block {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-cards);
+  background: var(--code-bg);
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 360ms var(--ease-out), transform 420ms var(--ease-out);
+}
+.code-panel.open .code-block { opacity: 1; transform: none; }
+.code-block-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px 6px 16px;
+  background: var(--code-head);
+  color: #b4b4b4;
+  font-size: 12px;
+}
+.code-block-head .spacer { flex: 1; }
+.code-action { color: #b4b4b4; padding: 6px 10px; font-size: 12px; }
+.code-action:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
+.code-block pre {
+  flex: 1;
+  margin: 0;
+  overflow: auto;
+  padding: var(--spacing-16);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  letter-spacing: 0;
+  color: #ececec;
+  scrollbar-color: #444 transparent;
+}
+#code.refresh { animation: code-refresh 380ms var(--ease-out); }
+
+/* シンタックスハイライト */
+.tok-com { color: rgba(255, 255, 255, 0.45); }
+.tok-str { color: #00a67d; }
+.tok-kw  { color: #2e95d3; }
+.tok-num { color: #df3079; }
+.tok-bi  { color: #e9950c; }
+.tok-def { color: #f22c3d; }
+
+/* 流れるように表示されるときの末尾の黒丸 */
+.stream-cursor {
+  display: inline-block;
+  width: 0.62em; height: 0.62em;
+  margin-left: 3px;
+  border-radius: var(--radius-full);
+  background: #ececec;
+  vertical-align: middle;
+  animation: pulse-dot 1s var(--ease-in-out) infinite;
+}
+
+/* =========================================================
+   アニメーション
+   ========================================================= */
+/* ページを開いたとき：ぼかしから順番にふわっと現れる */
+.reveal { animation: blur-in var(--dur-slow) var(--ease-out) both; animation-delay: calc(var(--i, 0) * 70ms); }
+
+@keyframes blur-in {
+  from { opacity: 0; transform: translateY(10px); filter: blur(6px); }
+  to   { opacity: 1; transform: none; filter: blur(0); }
+}
+@keyframes rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+/* 新しい画像がぼかしからくっきりする */
+@keyframes image-reveal {
+  from { opacity: 0.35; filter: blur(10px); transform: scale(0.985); }
+  60%  { opacity: 1; }
+  to   { opacity: 1; filter: blur(0); transform: none; }
+}
+/* 処理中の文字の上を光が流れる */
+@keyframes shimmer-text {
+  from { background-position: 150% 0; }
+  to   { background-position: -50% 0; }
+}
+.status.busy #status-text {
+  color: transparent;
+  background: linear-gradient(90deg, var(--color-graphite) 0%, var(--color-graphite) 35%, #d6d6d6 50%, var(--color-graphite) 65%, var(--color-graphite) 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+@keyframes sweep {
+  from { background-position: 150% 0; }
+  to   { background-position: -50% 0; }
+}
+/* 黒い点がゆっくり呼吸する */
+@keyframes pulse-dot {
+  0%, 100% { transform: scale(0.75); opacity: 0.55; }
+  50%      { transform: scale(1.15); opacity: 1; }
+}
+@keyframes breathe {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(0.82); }
+}
+@keyframes code-refresh {
+  from { opacity: 0.55; }
+  to   { opacity: 1; }
+}
+
+/* 動きを減らす設定の人にはアニメーションを止める */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* =========================================================
+   幅が狭いとき（ノートPC など）
+   ========================================================= */
+@media (max-width: 1180px) {
+  .layout { grid-template-columns: minmax(230px, 1fr) minmax(280px, 1.4fr) 270px; }
+  .pane { padding: var(--spacing-16); }
+  #grid input { width: 80px; }
+  .brand-sub { display: none; }
+}
+@media (max-width: 860px) {
+  /* 1 列に並べて，ページ全体をスクロールさせる */
+  body { display: block; overflow: auto; height: auto; }
+  .layout { grid-template-columns: 1fr; }
+  .pane { overflow: visible; }
+  .pane + .pane { border-left: none; border-top: 1px solid var(--color-hairline); }
+  .table-wrap { max-height: 50vh; }
+  .preview-box { flex: none; height: min(70vh, 520px); }
+  .code-panel { position: sticky; bottom: 0; }
+  .code-bar .sub-hint { display: none; }
+  /* iPhone は 16px 未満の入力欄を触ると画面が拡大されるので 16px にする */
+  input[type=text], input[type=number], select, #grid input { font-size: 16px; }
+  .topbar { padding: 0 var(--spacing-16); gap: var(--spacing-12); }
+  .status { min-width: 0; flex: 1; justify-content: flex-end; }
+  #status-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .status-dot { flex: none; }
+  #reset-all { flex: none; padding: 7px 10px; font-size: 12px; }
+  /* プレビューは画像の大きさに合わせる（余白を作らない） */
+  .preview-box { height: auto; padding: var(--spacing-16); }
+  #preview { width: 100%; max-height: none; }
+}

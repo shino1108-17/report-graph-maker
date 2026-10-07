@@ -1,0 +1,9 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+matplotlib>=3.8
+numpy>=1.26
+# 日本語フォント（IPAexゴシック）を同梱．Python 3.12 でも動く japanize-matplotlib の後継
+matplotlib-fontja>=1.0
+# テスト用
+pytest>=8.0
+httpx>=0.27
