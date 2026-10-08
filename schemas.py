@@ -29,6 +29,11 @@ JP_FONTS = [
     "YuGothic", "YuMincho", "BIZ UDGothic", "BIZ UDMincho",
     "Noto Sans CJK JP", "Noto Serif CJK JP", "MS Gothic", "MS Mincho",
 ]
+ColumnRole = Literal["series", "error", "repeat"]  # 系列／誤差（左の系列の）／繰り返し測定（左の系列の）
+ErrorMode = Literal["none", "column", "sd", "se", "fixed", "percent"]
+TrendKind = Literal["none", "linear", "poly2", "poly3", "exp", "log", "power"]
+TREND_MIN_POINTS = {"linear": 2, "poly2": 3, "poly3": 4, "exp": 2, "log": 2, "power": 2}
+
 SERIF_FONTS = {"Times New Roman", "STIXGeneral", "DejaVu Serif", "Hiragino Mincho ProN", "YuMincho", "BIZ UDMincho",
                "Noto Serif CJK JP", "MS Mincho"}
 
@@ -49,6 +54,24 @@ def parse_number(text: str) -> float | None:
 class Data(BaseModel):
     columns: list[str] = Field(min_length=2, max_length=MAX_SERIES + 1)
     rows: list[list[str]] = Field(max_length=MAX_ROWS)
+    # 2 列目以降の役割．足りない分は "series"（系列）とみなす
+    roles: list[ColumnRole] = Field(default_factory=list, max_length=MAX_SERIES)
+
+    @model_validator(mode="after")
+    def _check_roles(self) -> "Data":
+        n = len(self.columns) - 1
+        self.roles = (list(self.roles) + ["series"] * n)[:n]
+        if self.roles and self.roles[0] != "series":
+            raise ValueError("2列目（最初の Y の列）の役割は「系列」にしてください")
+        errors_in_group = 0
+        for c, role in enumerate(self.roles, start=2):
+            if role == "series":
+                errors_in_group = 0
+            elif role == "error":
+                errors_in_group += 1
+                if errors_in_group > 1:
+                    raise ValueError(f"{c}列目: 1つの系列に「誤差」の列は1つまでです")
+        return self
 
     @field_validator("columns")
     @classmethod
@@ -81,6 +104,7 @@ class AxisSettings(BaseModel):
     min: float | None = Field(None, allow_inf_nan=False)
     max: float | None = Field(None, allow_inf_nan=False)
     step: float | None = Field(None, gt=0, allow_inf_nan=False)
+    tick_decimals: int | None = Field(None, ge=0, le=6)  # 目盛りの数値の小数点以下の桁数（None なら自動）
     log: bool = False
     start_zero: bool = False   # Y 軸だけで使う
 
@@ -107,6 +131,13 @@ class SeriesStyle(BaseModel):
     marker: Literal["o", "s", "^", "v", "D", "x", "+", "*", "none"] = "o"
     marker_size: float = Field(4, ge=0, le=30)
     marker_fill: bool = True
+    # 誤差棒: なし／誤差の列／標準偏差・標準誤差（繰り返し測定から計算）／固定値／割合 [%]
+    error: ErrorMode = "none"
+    error_value: float = Field(0, ge=0, le=1e12, allow_inf_nan=False)
+    # 近似曲線（散布図のときだけ）
+    trend: TrendKind = "none"
+    trend_equation: bool = True
+    trend_r2: bool = True
 
 
 class DataLabelSettings(BaseModel):
@@ -149,6 +180,9 @@ class GraphSettings(BaseModel):
     axis_color: str = Field("#000000", pattern=r"^#[0-9a-fA-F]{6}$")
     tick_direction: Literal["in", "out"] = "in"
     outer_border: bool = False                         # 図全体の外枠
+    minor_ticks: bool = False                          # 補助目盛り
+    ticks_all_sides: bool = False                      # 目盛りを上と右にも付ける
+    error_capsize: float = Field(3, ge=0, le=20)       # 誤差棒の端の横線の長さ [pt]
     font: FontSettings = FontSettings()
     size: SizeSettings = SizeSettings()
     output: OutputSettings = OutputSettings()
@@ -174,6 +208,7 @@ class GraphSettings(BaseModel):
         self.series = self.series[: len(cols) - 1]
 
         d = parse_data(self.data, self.chart_type)
+        _check_series(self, d)
         ys = [v for y in d.ys for v in y if v is not None]
         xs = [v for v in d.x if v is not None] if x_numeric else []
         if x_numeric:
@@ -181,6 +216,29 @@ class GraphSettings(BaseModel):
         zero = [0.0] if self.y_axis.start_zero and not self.y_axis.log else []  # 対数のときは 0 から始めない
         _check_axis(self.y_axis, ys + zero, "Y")
         return self
+
+
+def _check_series(s: "GraphSettings", d: "ParsedData") -> None:
+    """誤差棒・近似曲線の設定が，データと合っているかを調べる．"""
+    for g in d.groups:
+        st = s.series[g.style]
+        if st.error == "column" and g.err is None:
+            raise ValueError(f"系列「{g.name}」: 誤差棒に使う列がありません（右隣の列の役割を「誤差」にしてください）")
+        if st.error in ("sd", "se") and len(g.trials) < 2:
+            raise ValueError(f"系列「{g.name}」: 標準偏差を計算するには，繰り返し測定の列が必要です"
+                             "（右隣の列の役割を「繰り返し」にしてください）")
+        if st.trend == "none" or s.chart_type not in SCATTER_TYPES:
+            continue
+        pts = [(x, y) for x, y in zip(d.x, g.y) if x is not None and y is not None]
+        need = TREND_MIN_POINTS[st.trend]
+        if len(pts) < need:
+            raise ValueError(f"系列「{g.name}」: この近似曲線には {need} 点以上のデータが必要です")
+        if st.trend in ("exp", "power") and any(y <= 0 for _, y in pts):
+            raise ValueError(f"系列「{g.name}」: 指数・累乗近似は Y がすべて 0 より大きいときだけ使えます")
+        if st.trend in ("log", "power") and any(x <= 0 for x, _ in pts):
+            raise ValueError(f"系列「{g.name}」: 対数・累乗近似は X がすべて 0 より大きいときだけ使えます")
+        if len({x for x, _ in pts}) < 2:
+            raise ValueError(f"系列「{g.name}」: 近似曲線には異なる X の値が 2 つ以上必要です")
 
 
 def _check_axis(axis: AxisSettings, values: list[float], name: str) -> None:
@@ -197,22 +255,61 @@ def _check_axis(axis: AxisSettings, values: list[float], name: str) -> None:
 
 # ---------------------------------------------------------------- データの変換
 
+Values = list[float | None]
+
+
+class SeriesGroup(BaseModel):
+    """グラフに描く 1 つの系列（「系列」の列と，その右に続く「誤差」「繰り返し」の列）．"""
+    name: str
+    style: int                 # series（見た目の設定）の何番目を使うか = 表の Y 列の番号 - 1
+    trials: list[Values]       # 1 回目（系列の列）と，繰り返し測定の列
+    err: Values | None = None  # 「誤差」の列
+
+    @property
+    def y(self) -> Values:
+        """描く値．繰り返し測定があれば平均．"""
+        if len(self.trials) == 1:
+            return self.trials[0]
+        out: Values = []
+        for vals in zip(*self.trials):
+            ok = [v for v in vals if v is not None]
+            out.append(sum(ok) / len(ok) if ok else None)
+        return out
+
+
 class ParsedData(BaseModel):
     """数値に変換済みのデータ（コード生成用）．"""
     x_name: str
-    x: list[float | None]      # 散布図用（数値）
+    x: Values                  # 散布図用（数値）
     x_labels: list[str]        # 折れ線・棒用（項目名）
-    names: list[str]
-    ys: list[list[float | None]]
+    groups: list[SeriesGroup]
+
+    @property
+    def names(self) -> list[str]:
+        return [g.name for g in self.groups]
+
+    @property
+    def ys(self) -> list[Values]:
+        return [g.y for g in self.groups]
 
 
 def parse_data(data: Data, chart_type: str) -> ParsedData:
     n_cols = len(data.columns)
+    roles = (list(data.roles) + ["series"] * n_cols)[: n_cols - 1]
     rows = [(row + [""] * n_cols)[:n_cols] for row in data.rows]
     rows = [row for row in rows if any(c.strip() for c in row)]  # 全部空欄の行は無視
     x_numeric = chart_type in SCATTER_TYPES
     x = [parse_number(row[0]) for row in rows] if x_numeric else []
     x_labels = [] if x_numeric else [unicodedata.normalize("NFKC", row[0]).strip() for row in rows]
-    ys = [[parse_number(row[c]) for row in rows] for c in range(1, n_cols)]
-    names = [name.strip() or f"系列{i}" for i, name in enumerate(data.columns[1:], start=1)]
-    return ParsedData(x_name=data.columns[0].strip(), x=x, x_labels=x_labels, names=names, ys=ys)
+    groups: list[SeriesGroup] = []
+    for c in range(1, n_cols):
+        values = [parse_number(row[c]) for row in rows]
+        role = roles[c - 1]
+        if role == "series" or not groups:
+            name = data.columns[c].strip() or f"系列{len(groups) + 1}"
+            groups.append(SeriesGroup(name=name, style=c - 1, trials=[values]))
+        elif role == "repeat":
+            groups[-1].trials.append(values)
+        else:
+            groups[-1].err = values
+    return ParsedData(x_name=data.columns[0].strip(), x=x, x_labels=x_labels, groups=groups)

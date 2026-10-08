@@ -53,5 +53,19 @@ def render(code: str, preview_px: int | None = None) -> tuple[bytes, list[str]]:
                 plt.close(fig)
             plt.close("all")
     # 利用者に役立つ警告（文字が無い等）だけを返す．ライブラリの「非推奨」の警告は開発者向けなので除く
-    messages = sorted({str(w.message) for w in caught if not issubclass(w.category, DeprecationWarning)})
+    messages = sorted({_friendly(str(w.message)) for w in caught if not issubclass(w.category, DeprecationWarning)})
     return buf.getvalue(), messages
+
+
+# よく出る matplotlib の警告を，分かりやすい日本語にする
+_FRIENDLY = {
+    "constrained_layout not applied": "文字や凡例が図に対して大きすぎて，余白を自動で調整できませんでした．"
+                                      "図を大きくするか，文字を小さくしてください（近似曲線の式は凡例の外に出すと収まることがあります）．",
+}
+
+
+def _friendly(message: str) -> str:
+    for key, text in _FRIENDLY.items():
+        if key in message:
+            return text
+    return message

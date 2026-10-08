@@ -8,6 +8,9 @@
   <link rel="stylesheet" href="static/style.css">
 </head>
 <body>
+<!-- =====================================================================
+     上部バー：状態・コード・保存・その他
+     ===================================================================== -->
 <header class="topbar reveal" style="--i:0">
   <div class="brand">
     <span class="brand-mark" aria-hidden="true"></span>
@@ -17,32 +20,86 @@
   <span id="status" class="status" role="status" aria-live="polite">
     <span class="status-dot" aria-hidden="true"></span><span id="status-text">準備中…</span>
   </span>
-  <button id="reset-all" class="ghost" title="データと設定を最初の状態に戻します">最初からやり直す</button>
+  <div class="top-actions">
+    <button id="code-toggle" class="ghost" aria-expanded="false" aria-controls="code-panel">コード</button>
+    <div class="split">
+      <!-- 塗りつぶしのボタンは画面全体でこれ 1 つだけ -->
+      <button id="save-main" class="primary">PNG を保存</button>
+      <button class="primary split-arrow" data-menu="save-menu" aria-label="保存の設定" aria-haspopup="true"><span class="caret"></span></button>
+    </div>
+    <button class="ghost icon-btn" data-menu="more-menu" aria-label="その他" aria-haspopup="true">⋯</button>
+  </div>
+
+  <!-- 保存の設定 -->
+  <div id="save-menu" class="popover" role="dialog" aria-label="保存の設定" hidden>
+    <div class="field">
+      <span class="field-label">形式</span>
+      <div class="segmented" data-bind="output.format">
+        <button data-value="png">PNG</button><button data-value="svg">SVG</button><button data-value="pdf">PDF</button>
+      </div>
+    </div>
+    <div class="field" id="dpi-field">
+      <span class="field-label">解像度</span>
+      <div class="segmented" data-bind="output.dpi" data-kind="int">
+        <button data-value="150">150</button><button data-value="300">300</button><button data-value="600">600 dpi</button>
+      </div>
+    </div>
+    <div class="field">
+      <span class="field-label">背景</span>
+      <div class="segmented" data-bind="output.transparent" data-kind="bool">
+        <button data-value="false">白</button><button data-value="true">透明</button>
+      </div>
+    </div>
+    <p class="sub-hint" id="save-note"></p>
+    <div class="menu-sep"></div>
+    <button class="menu-item" id="save-py">Python コード（.py）を保存</button>
+  </div>
+
+  <!-- その他 -->
+  <div id="more-menu" class="popover menu" role="menu" hidden>
+    <button class="menu-item" id="more-code" role="menuitem">Python コードを表示</button>
+    <div class="menu-sep"></div>
+    <button class="menu-item" id="reset-all" role="menuitem">最初からやり直す</button>
+  </div>
 </header>
 
 <main class="layout">
-  <!-- ===================== 左：データ入力 ===================== -->
+  <!-- =====================================================================
+       左：データ
+       ===================================================================== -->
   <section class="pane pane-data reveal" style="--i:1">
-    <h2 class="section-label">データ</h2>
-    <p class="hint">1列目が X，2列目以降が Y（系列）．見出しが系列名になります．<br>
-      Excel でコピーした範囲は，貼り付けたい左上のセル（見出しごとなら見出しのセル）を選んで ⌘+V．</p>
-    <div class="toolbar">
-      <button id="row-add" class="pill" title="選択中の行の下に追加">＋ 行</button>
-      <button id="row-del" class="pill" title="選択中の行を削除">− 行</button>
-      <button id="col-add" class="pill" title="右端に系列を追加">＋ 列</button>
-      <button id="col-del" class="pill" title="選択中の列を削除">− 列</button>
-      <button id="csv-open" class="pill">CSV を開く</button>
-      <button id="clear-data" class="ghost" title="値をすべて消す">クリア</button>
+    <div class="pane-head">
+      <h2 class="section-label">データ</h2>
+      <div class="head-tools">
+        <div class="stepper" aria-label="行">
+          <span>行</span>
+          <button id="row-add" title="選択中の行の下に追加" aria-label="行を追加">＋</button>
+          <button id="row-del" title="選択中の行を削除" aria-label="行を削除">−</button>
+        </div>
+        <div class="stepper" aria-label="列">
+          <span>列</span>
+          <button id="col-add" title="選択中の列の右に追加" aria-label="列を追加">＋</button>
+          <button id="col-del" title="選択中の列を削除" aria-label="列を削除">−</button>
+        </div>
+        <button class="ghost icon-btn" data-menu="data-menu" aria-label="データのその他の操作" aria-haspopup="true">⋯</button>
+      </div>
+      <div id="data-menu" class="popover menu" role="menu" hidden>
+        <button class="menu-item" id="csv-open" role="menuitem">CSV を読み込む…</button>
+        <button class="menu-item" id="clear-data" role="menuitem">値をすべて消す</button>
+      </div>
       <input type="file" id="csv-file" accept=".csv,.tsv,.txt,text/csv" hidden>
     </div>
+    <p class="hint">1列目が X．見出しのセルに Excel の表を貼り付けられます．列の下の「役割」で，誤差や繰り返し測定の列にできます．右クリックで行・列を挿入・削除．</p>
     <div class="table-wrap">
       <table id="grid"></table>
     </div>
   </section>
 
-  <!-- ===================== 中央：プレビュー ===================== -->
+  <!-- =====================================================================
+       中央：プレビュー
+       ===================================================================== -->
   <section class="pane pane-preview reveal" style="--i:2">
-    <div class="preview-head">
+    <div class="pane-head">
       <h2 class="section-label">プレビュー</h2>
       <div id="preview-info" class="preview-info"></div>
     </div>
@@ -53,166 +110,210 @@
     <div id="messages" class="messages"></div>
   </section>
 
-  <!-- ===================== 右：設定 ===================== -->
+  <!-- =====================================================================
+       右：設定（タブ）
+       ===================================================================== -->
   <section class="pane pane-settings reveal" style="--i:3" id="settings">
+    <div class="tabs" role="tablist">
+      <button role="tab" data-tab="chart">グラフ</button>
+      <button role="tab" data-tab="axes">軸</button>
+      <button role="tab" data-tab="series">系列</button>
+      <button role="tab" data-tab="text">文字・サイズ</button>
+    </div>
 
-    <details open>
-      <summary>グラフの種類</summary>
-      <div class="chips" id="chart-types">
-        <button class="pill" data-type="scatter">散布図（点のみ）</button>
-        <button class="pill" data-type="scatter_line">散布図（直線とマーカー）</button>
-        <button class="pill" data-type="line">折れ線</button>
-        <button class="pill" data-type="bar">棒グラフ（縦）</button>
-      </div>
-      <p class="sub-hint" id="chart-note"></p>
-      <label>プリセット</label>
-      <div class="chips">
-        <button class="pill" data-preset="report">レポート用（白黒・58mm・7pt）</button>
-        <button class="pill" data-preset="excel">Excel 風</button>
-        <button class="pill" data-preset="simple">シンプル</button>
-      </div>
-    </details>
-
-    <details open>
-      <summary>タイトル・凡例</summary>
-      <label class="check"><input type="checkbox" id="title-show"> グラフタイトルを表示</label>
-      <input type="text" id="title-text" placeholder="グラフタイトル" maxlength="100">
-
-      <label class="check"><input type="checkbox" id="legend-show"> 凡例を表示</label>
-      <div class="grid2">
-        <label>位置
-          <select id="legend-loc">
-            <option value="best">自動（重ならない所）</option>
-            <option value="upper right">右上</option>
-            <option value="upper left">左上</option>
-            <option value="lower right">右下</option>
-            <option value="lower left">左下</option>
-            <option value="outside bottom">下（グラフの外）</option>
-            <option value="outside right">右（グラフの外）</option>
-          </select>
-        </label>
-        <label class="check align-end"><input type="checkbox" id="legend-frame"> 枠で囲む</label>
+    <!-- ---------- グラフ ---------- -->
+    <div class="tab-panel" data-panel="chart" role="tabpanel">
+      <div class="group">
+        <h3>種類</h3>
+        <div class="choice-grid segmented-like" data-bind="chart_type">
+          <button data-value="scatter">散布図（点のみ）</button>
+          <button data-value="scatter_line">散布図（線とマーカー）</button>
+          <button data-value="line">折れ線</button>
+          <button data-value="bar">棒グラフ（縦）</button>
+        </div>
+        <p class="sub-hint" id="chart-note"></p>
       </div>
 
-      <label class="check"><input type="checkbox" id="labels-show"> データラベル（各点に値を表示）</label>
-      <label>小数点以下の桁数
-        <input type="number" id="labels-decimals" min="0" max="6" step="1">
-      </label>
-    </details>
-
-    <details>
-      <summary>軸</summary>
-      <!-- X 軸 -->
-      <label class="check"><input type="checkbox" id="x-label-show"> X 軸ラベルを表示</label>
-      <input type="text" id="x-label" placeholder="空欄なら1列目の見出し" maxlength="100">
-      <p class="sub-hint" id="x-label-hint"></p>
-      <div class="grid3 x-range">
-        <label>最小<input type="number" id="x-min" placeholder="自動" step="any"></label>
-        <label>最大<input type="number" id="x-max" placeholder="自動" step="any"></label>
-        <label>目盛り間隔<input type="number" id="x-step" placeholder="自動" step="any" min="0"></label>
+      <div class="group">
+        <h3>スタイル</h3>
+        <div class="chips">
+          <button class="pill" data-preset="report">レポート用（白黒・58mm・7pt）</button>
+          <button class="pill" data-preset="excel">Excel 風</button>
+          <button class="pill" data-preset="simple">シンプル</button>
+        </div>
       </div>
-      <label class="check x-range"><input type="checkbox" id="x-log"> X 軸を対数目盛りにする</label>
 
-      <!-- Y 軸 -->
-      <label class="check spaced"><input type="checkbox" id="y-label-show"> Y 軸ラベルを表示</label>
-      <input type="text" id="y-label" placeholder="空欄なら系列の見出し（1系列のとき）" maxlength="100">
-      <p class="sub-hint" id="y-label-hint"></p>
-      <div class="grid3">
-        <label>最小<input type="number" id="y-min" placeholder="自動" step="any"></label>
-        <label>最大<input type="number" id="y-max" placeholder="自動" step="any"></label>
-        <label>目盛り間隔<input type="number" id="y-step" placeholder="自動" step="any" min="0"></label>
+      <div class="group">
+        <div class="row-head"><h3>タイトル</h3><input type="checkbox" class="switch" data-bind="title.show" aria-label="タイトルを表示"></div>
+        <input type="text" id="title-text" data-bind="title.text" placeholder="グラフタイトル" maxlength="100">
       </div>
-      <label class="check"><input type="checkbox" id="y-zero"> Y 軸を 0 から始める</label>
-      <label class="check"><input type="checkbox" id="y-log"> Y 軸を対数目盛りにする</label>
 
-      <!-- 見た目 -->
-      <div class="grid2 spaced">
-        <label>目盛り線
-          <select id="grid-mode">
-            <option value="none">なし</option>
-            <option value="y">横のみ</option>
-            <option value="both">縦横</option>
-          </select>
-        </label>
-        <label>目盛りの向き
-          <select id="tick-dir">
-            <option value="in">内側</option>
-            <option value="out">外側</option>
-          </select>
-        </label>
-        <label>軸の枠線
-          <select id="frame">
-            <option value="box">四方を囲む</option>
-            <option value="L">左と下だけ</option>
-            <option value="bottom">下だけ（Excel風）</option>
-          </select>
-        </label>
-        <label>軸線の色
-          <input type="color" id="axis-color">
+      <div class="group">
+        <div class="row-head"><h3>凡例</h3><input type="checkbox" class="switch" data-bind="legend.show" aria-label="凡例を表示"></div>
+        <div class="grid2 legend-opts">
+          <label>位置
+            <select data-bind="legend.loc">
+              <option value="best">自動（重ならない所）</option>
+              <option value="upper right">右上</option>
+              <option value="upper left">左上</option>
+              <option value="lower right">右下</option>
+              <option value="lower left">左下</option>
+              <option value="outside bottom">下（グラフの外）</option>
+              <option value="outside right">右（グラフの外）</option>
+            </select>
+          </label>
+          <label class="inline-switch">枠<input type="checkbox" class="switch" data-bind="legend.frame"></label>
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="row-head"><h3>データラベル</h3><input type="checkbox" class="switch" data-bind="data_labels.show" aria-label="データラベルを表示"></div>
+        <label class="labels-opts">小数点以下の桁数
+          <input type="number" data-bind="data_labels.decimals" data-kind="int" min="0" max="6" step="1">
         </label>
       </div>
-      <label class="check"><input type="checkbox" id="outer-border"> 外枠（図全体を囲む線）</label>
-    </details>
+    </div>
 
-    <details>
-      <summary>系列</summary>
+    <!-- ---------- 軸 ---------- -->
+    <div class="tab-panel" data-panel="axes" role="tabpanel" hidden>
+      <div class="group">
+        <div class="row-head"><h3>X 軸</h3><input type="checkbox" class="switch" data-bind="x_axis.show_label" aria-label="X 軸ラベルを表示"></div>
+        <input type="text" data-bind="x_axis.label" id="x-label" placeholder="ラベル（空欄なら1列目の見出し）" maxlength="100">
+        <p class="sub-hint" id="x-label-hint"></p>
+        <div class="grid3 x-num">
+          <label>最小<input type="number" data-bind="x_axis.min" data-kind="optnum" placeholder="自動" step="any"></label>
+          <label>最大<input type="number" data-bind="x_axis.max" data-kind="optnum" placeholder="自動" step="any"></label>
+          <label>間隔<input type="number" data-bind="x_axis.step" data-kind="optnum" id="x-step" placeholder="自動" step="any" min="0"></label>
+        </div>
+        <div class="grid2 x-num">
+          <label>数値の桁
+            <select data-bind="x_axis.tick_decimals" data-kind="optint">
+              <option value="">自動</option><option value="0">整数</option><option value="1">0.0</option>
+              <option value="2">0.00</option><option value="3">0.000</option><option value="4">0.0000</option>
+            </select>
+          </label>
+          <label class="inline-switch">対数目盛り<input type="checkbox" class="switch" data-bind="x_axis.log"></label>
+        </div>
+        <p class="sub-hint" id="x-cat-note"></p>
+      </div>
+
+      <div class="group">
+        <div class="row-head"><h3>Y 軸</h3><input type="checkbox" class="switch" data-bind="y_axis.show_label" aria-label="Y 軸ラベルを表示"></div>
+        <input type="text" data-bind="y_axis.label" id="y-label" placeholder="ラベル（空欄なら系列の見出し）" maxlength="100">
+        <p class="sub-hint" id="y-label-hint"></p>
+        <div class="grid3">
+          <label>最小<input type="number" data-bind="y_axis.min" data-kind="optnum" placeholder="自動" step="any"></label>
+          <label>最大<input type="number" data-bind="y_axis.max" data-kind="optnum" placeholder="自動" step="any"></label>
+          <label>間隔<input type="number" data-bind="y_axis.step" data-kind="optnum" id="y-step" placeholder="自動" step="any" min="0"></label>
+        </div>
+        <div class="grid2">
+          <label>数値の桁
+            <select data-bind="y_axis.tick_decimals" data-kind="optint">
+              <option value="">自動</option><option value="0">整数</option><option value="1">0.0</option>
+              <option value="2">0.00</option><option value="3">0.000</option><option value="4">0.0000</option>
+            </select>
+          </label>
+          <label class="inline-switch">対数目盛り<input type="checkbox" class="switch" data-bind="y_axis.log"></label>
+        </div>
+        <label class="switch-row">0 から始める<input type="checkbox" class="switch" id="y-zero" data-bind="y_axis.start_zero"></label>
+      </div>
+
+      <div class="group">
+        <h3>目盛り</h3>
+        <div class="field">
+          <span class="field-label">目盛り線</span>
+          <div class="segmented" data-bind="grid">
+            <button data-value="none">なし</button><button data-value="y">横</button><button data-value="both">縦横</button>
+          </div>
+        </div>
+        <div class="field">
+          <span class="field-label">向き</span>
+          <div class="segmented" data-bind="tick_direction">
+            <button data-value="in">内側</button><button data-value="out">外側</button>
+          </div>
+        </div>
+        <label class="switch-row">補助目盛り<input type="checkbox" class="switch" data-bind="minor_ticks"></label>
+        <label class="switch-row">上と右にも目盛り<input type="checkbox" class="switch" data-bind="ticks_all_sides"></label>
+      </div>
+
+      <div class="group">
+        <h3>枠</h3>
+        <div class="field">
+          <span class="field-label">軸の枠線</span>
+          <div class="segmented" data-bind="frame">
+            <button data-value="box">四方</button><button data-value="L">左と下</button><button data-value="bottom">下だけ</button>
+          </div>
+        </div>
+        <label class="switch-row">軸線の色<input type="color" data-bind="axis_color"></label>
+        <label class="switch-row">外枠（図全体を囲む）<input type="checkbox" class="switch" data-bind="outer_border"></label>
+      </div>
+    </div>
+
+    <!-- ---------- 系列 ---------- -->
+    <div class="tab-panel" data-panel="series" role="tabpanel" hidden>
+      <p class="sub-hint">誤差棒に「標準偏差」を使うには，表で測定値の右の列の役割を「繰り返し」に，誤差の値が入った列は「±誤差」にします．</p>
       <div id="series-list"></div>
-    </details>
+      <div class="group">
+        <h3>誤差棒</h3>
+        <label class="switch-row">端の横線の長さ [pt]<input type="number" class="short" data-bind="error_capsize" data-kind="num" min="0" max="20" step="0.5"></label>
+      </div>
+    </div>
 
-    <details open>
-      <summary>文字・サイズ・保存</summary>
-      <div class="grid2">
-        <label>英数字のフォント<select id="font-latin"></select></label>
-        <label>日本語のフォント<select id="font-jp"></select></label>
-        <label>文字の大きさ [pt]<input type="number" id="font-size" min="4" max="30" step="0.5"></label>
+    <!-- ---------- 文字・サイズ ---------- -->
+    <div class="tab-panel" data-panel="text" role="tabpanel" hidden>
+      <div class="group">
+        <h3>フォント</h3>
+        <div class="grid2">
+          <label>英数字<select id="font-latin" data-bind="font.latin"></select></label>
+          <label>日本語<select id="font-jp" data-bind="font.jp"></select></label>
+        </div>
+        <label class="switch-row">文字の大きさ [pt]<input type="number" class="short" data-bind="font.size" data-kind="num" min="4" max="30" step="0.5"></label>
       </div>
-      <div class="grid2">
-        <label>幅 [mm]<input type="number" id="width" min="20" max="300" step="1"></label>
-        <label>高さ [mm]<input type="number" id="height" min="20" max="300" step="1"></label>
-        <label>解像度（PNG）
-          <select id="dpi">
-            <option value="150">150 dpi</option>
-            <option value="300">300 dpi</option>
-            <option value="600">600 dpi</option>
-          </select>
-        </label>
-        <label>背景
-          <select id="background">
-            <option value="white">白</option>
-            <option value="transparent">透明</option>
-          </select>
-        </label>
+      <div class="group">
+        <h3>大きさ</h3>
+        <div class="grid2">
+          <label>幅 [mm]<input type="number" data-bind="size.width_mm" data-kind="num" min="20" max="300" step="1"></label>
+          <label>高さ [mm]<input type="number" data-bind="size.height_mm" data-kind="num" min="20" max="300" step="1"></label>
+        </div>
+        <div class="chips" id="size-chips">
+          <button class="pill" data-size="58x45">58 × 45</button>
+          <button class="pill" data-size="80x60">80 × 60</button>
+          <button class="pill" data-size="120x90">120 × 90</button>
+          <button class="pill" data-size="160x100">160 × 100</button>
+        </div>
       </div>
-      <div class="btn-row">
-        <!-- 塗りつぶしのボタンは画面全体でこれ 1 つだけ -->
-        <button class="primary" data-download="png">PNG を保存</button>
-        <button class="pill" data-download="svg">SVG</button>
-        <button class="pill" data-download="pdf">PDF</button>
-      </div>
-    </details>
+    </div>
   </section>
 </main>
 
-<!-- ===================== 下：Python コード ===================== -->
-<section id="code-panel" class="code-panel reveal" style="--i:4">
-  <div class="code-bar">
-    <button id="code-toggle" class="ghost tab" aria-expanded="false">
-      <span class="chevron" aria-hidden="true"></span>Python コード
-    </button>
-    <span class="sub-hint">このコードを実行すると，プレビューと同じグラフが保存されます</span>
-  </div>
+<!-- =====================================================================
+     下：Python コード（上部の「コード」で開閉）
+     ===================================================================== -->
+<section id="code-panel" class="code-panel" aria-label="Python コード">
   <div class="code-body">
     <div class="code-block">
       <div class="code-block-head">
         <span>python</span>
+        <span class="code-head-note">このコードを実行すると，プレビューと同じグラフが保存されます</span>
         <span class="spacer"></span>
         <button id="code-copy" class="code-action">コピー</button>
         <button id="code-save" class="code-action">.py で保存</button>
+        <button id="code-close" class="code-action">閉じる</button>
       </div>
       <pre><code id="code"></code></pre>
     </div>
   </div>
 </section>
+
+<!-- 表の右クリックメニュー -->
+<div id="ctx-menu" class="popover menu" role="menu" hidden>
+  <button class="menu-item" data-act="row-above" role="menuitem">上に行を挿入</button>
+  <button class="menu-item" data-act="row-below" role="menuitem">下に行を挿入</button>
+  <button class="menu-item" data-act="row-delete" role="menuitem">この行を削除</button>
+  <div class="menu-sep"></div>
+  <button class="menu-item" data-act="col-right" role="menuitem">右に列を挿入</button>
+  <button class="menu-item" data-act="col-delete" role="menuitem">この列を削除</button>
+</div>
 
 <script src="static/app.js"></script>
 </body>

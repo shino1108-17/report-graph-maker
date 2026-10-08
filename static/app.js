@@ -3,6 +3,9 @@
 
 const $ = (id) => document.getElementById(id);
 const STORAGE_KEY = "graph-app-v1";
+const UI_KEY = "graph-app-ui";
+const MAX_COLS = 11;   // X ＋ Y 10 列
+const MAX_ROWS = 2000;
 
 // ============================================================
 //  1. 状態（データ表と設定）
@@ -15,16 +18,17 @@ const SAMPLE = {
 const table = {
   columns: [...SAMPLE.columns],
   rows: SAMPLE.rows.map((r) => [...r]),
+  roles: ["series"],       // 2 列目以降の役割: "series"（系列）/ "error"（±誤差）/ "repeat"（繰り返し測定）
   current: { r: 0, c: 0 }, // 選択中のセル（r = -1 は見出し行）
 };
 
-// 設定（サーバーの GraphSettings と同じ形．data と series 以外）
+// 設定（サーバーの GraphSettings と同じ形．data 以外）
 function defaultSettings() {
   return {
     chart_type: "scatter_line",
     title: { show: false, text: "" },
-    x_axis: { show_label: true, label: "", min: null, max: null, step: null, log: false, start_zero: false },
-    y_axis: { show_label: true, label: "", min: null, max: null, step: null, log: false, start_zero: true },
+    x_axis: { show_label: true, label: "", min: null, max: null, step: null, tick_decimals: null, log: false, start_zero: false },
+    y_axis: { show_label: true, label: "", min: null, max: null, step: null, tick_decimals: null, log: false, start_zero: true },
     legend: { show: true, loc: "best", frame: true },
     grid: "none",
     data_labels: { show: false, decimals: 2 },
@@ -32,6 +36,9 @@ function defaultSettings() {
     axis_color: "#000000",
     tick_direction: "in",
     outer_border: false,
+    minor_ticks: false,
+    ticks_all_sides: false,
+    error_capsize: 3,
     font: { latin: "", jp: "IPAexGothic", size: 7 },
     size: { width_mm: 58, height_mm: 45 },
     output: { format: "png", dpi: 300, transparent: false },
@@ -39,8 +46,11 @@ function defaultSettings() {
     preset: "report",
   };
 }
+// 系列の「見た目以外」の設定（誤差棒・近似曲線）の初期値
+const SERIES_EXTRA = { error: "none", error_value: 0, trend: "none", trend_equation: true, trend_r2: true };
+
 let S = defaultSettings();
-let fonts = { latin: [""], jp: ["IPAexGothic"] }; // この PC で使えるフォント（起動時に取得）
+let fonts = { latin: [""], jp: ["IPAexGothic"] }; // 使えるフォント（起動時に取得）
 
 // ============================================================
 //  2. プリセット
@@ -72,8 +82,8 @@ function seriesStyleFor(preset, i) {
 const PRESETS = {
   report: () => ({
     // 系列が 1 つなら凡例は不要（軸ラベルで分かる）
-    title: { show: false }, legend: { show: table.columns.length > 2, loc: "best", frame: true }, grid: "none", frame: "box",
-    axis_color: "#000000", tick_direction: "in", outer_border: false,
+    title: { show: false }, legend: { show: seriesGroups().length > 1, loc: "best", frame: true }, grid: "none", frame: "box",
+    axis_color: "#000000", tick_direction: "in", outer_border: false, minor_ticks: false, ticks_all_sides: true,
     font: {
       latin: firstAvailable(fonts.latin, ["Times New Roman", "STIXGeneral", ""]),
       jp: firstAvailable(fonts.jp, ["Hiragino Mincho ProN", "YuMincho", "BIZ UDMincho", "MS Mincho", "IPAexGothic"]),
@@ -83,13 +93,13 @@ const PRESETS = {
   }),
   excel: () => ({
     title: { show: true }, legend: { show: true, loc: "outside bottom", frame: false }, grid: "y", frame: "bottom",
-    axis_color: "#bfbfbf", tick_direction: "out", outer_border: true,
+    axis_color: "#bfbfbf", tick_direction: "out", outer_border: true, minor_ticks: false, ticks_all_sides: false,
     font: { latin: "", jp: firstAvailable(fonts.jp, ["YuGothic", "Hiragino Sans", "IPAexGothic"]), size: 9 },
     size: { width_mm: 127, height_mm: 76 },
   }),
   simple: () => ({
     legend: { show: true, loc: "best", frame: false }, grid: "none", frame: "L",
-    axis_color: "#000000", tick_direction: "out", outer_border: false,
+    axis_color: "#000000", tick_direction: "out", outer_border: false, minor_ticks: false, ticks_all_sides: false,
     font: { latin: "", jp: firstAvailable(fonts.jp, ["Hiragino Sans", "IPAexGothic"]), size: 9 },
     size: { width_mm: 100, height_mm: 75 },
   }),
@@ -98,24 +108,73 @@ const PRESETS = {
 function applyPreset(name) {
   deepMerge(S, PRESETS[name]());
   S.preset = name;
-  S.series = [];
-  syncSeries();
+  restyle();
   stateToUI();
   scheduleUpdate(0);
 }
 
+// 系列の見た目を，今のプリセットで「何番目の系列か」に合わせて付け直す（誤差棒・近似曲線の設定は残す）
+function restyle() {
+  syncSeries();
+  seriesGroups().forEach((g, gi) => {
+    S.series[g.col - 1] = { ...S.series[g.col - 1], ...seriesStyleFor(S.preset, gi) };
+  });
+}
+
 function deepMerge(target, src) {
   for (const [k, v] of Object.entries(src)) {
-    if (v && typeof v === "object" && !Array.isArray(v)) deepMerge(target[k], v);
+    if (v && typeof v === "object" && !Array.isArray(v) && target[k]) deepMerge(target[k], v);
     else target[k] = v;
   }
 }
 
-// 系列スタイルの数を，表の Y 列の数に合わせる
+// 系列スタイル・列の役割の数を，表の Y 列の数に合わせる
 function syncSeries() {
   const n = table.columns.length - 1;
   while (S.series.length < n) S.series.push(seriesStyleFor(S.preset, S.series.length));
   S.series.length = n;
+  S.series = S.series.map((st) => ({ ...SERIES_EXTRA, ...st }));
+  while (table.roles.length < n) table.roles.push("series");
+  table.roles.length = n;
+  if (n > 0) table.roles[0] = "series"; // 最初の Y 列は必ず系列
+}
+
+// 系列のまとまり: 「系列」の列と，その右に続く「誤差」「繰り返し」の列
+function seriesGroups() {
+  const groups = [];
+  table.roles.forEach((role, i) => {
+    const c = i + 1;
+    if (role === "series" || groups.length === 0) {
+      groups.push({ col: c, name: table.columns[c] || `系列${groups.length + 1}`, repeats: [], errorCol: null });
+    } else if (role === "repeat") {
+      groups[groups.length - 1].repeats.push(c);
+    } else {
+      groups[groups.length - 1].errorCol = c;
+    }
+  });
+  return groups;
+}
+
+// 使えなくなった誤差棒の設定を直す．autoSelect なら，使えるようになった誤差棒を自動で選ぶ
+// （自動で選ぶのは，列の役割を変えた・貼り付けた・CSV を読んだときだけ）
+function fixSeriesErrors(autoSelect = false) {
+  for (const g of seriesGroups()) {
+    const st = S.series[g.col - 1];
+    if (!st) continue;
+    if (st.error === "column" && g.errorCol === null) st.error = "none";
+    if ((st.error === "sd" || st.error === "se") && g.repeats.length === 0) st.error = "none";
+    if (!autoSelect) continue;
+    if (st.error === "none" && g.errorCol !== null) st.error = "column";
+    else if (st.error === "none" && g.repeats.length > 0) st.error = "sd";
+  }
+}
+
+// 見出しの名前から役割を推測する（CSV・貼り付けのとき）
+function guessRole(name, index) {
+  if (index === 0) return "series";
+  if (/標準偏差|偏差|誤差|不確か|SD\b|σ|std|err/i.test(name)) return "error";
+  if (/(^|[^0-9])([2-9]|1[0-9])\s*回目|試行\s*[2-9]|trial\s*[2-9]/i.test(name)) return "repeat";
+  return "series";
 }
 
 // ============================================================
@@ -123,7 +182,7 @@ function syncSeries() {
 // ============================================================
 function isNumberLike(text) {
   const s = String(text).normalize("NFKC").trim().replace(/[−ー]/g, "-");
-  return s === "" || (s !== "" && isFinite(Number(s)));
+  return s === "" || isFinite(Number(s));
 }
 
 function xIsCategory() {
@@ -134,12 +193,30 @@ function cellIsValid(r, c, v) {
   return (c === 0 && xIsCategory()) || isNumberLike(v);
 }
 
+const ROLE_OPTIONS = [["series", "系列"], ["error", "± 誤差"], ["repeat", "繰り返し"]];
+
+function columnCaption(c, groups) {
+  if (c === 0) return "X";
+  const gi = groups.findIndex((g) => g.col === c || g.errorCol === c || g.repeats.includes(c));
+  const g = groups[gi];
+  if (g.col === c) return `Y${gi + 1}`;
+  if (g.errorCol === c) return `Y${gi + 1} の誤差`;
+  return `Y${gi + 1} の ${g.repeats.indexOf(c) + 2} 回目`;
+}
+
 function renderGrid() {
   const nCols = table.columns.length;
+  const groups = seriesGroups();
   let html = "<thead><tr><th class='rownum'></th>";
   table.columns.forEach((name, c) => {
-    const role = c === 0 ? "X" : `Y${c}`;
-    html += `<th><span class="colname">${role}</span><input data-r="-1" data-c="${c}" value="${escapeHtml(name)}" maxlength="100"></th>`;
+    const role = c === 0 ? "x" : table.roles[c - 1];
+    let roleSelect = "";
+    if (c > 0) {
+      const opts = ROLE_OPTIONS.map(([v, label]) => `<option value="${v}"${v === role ? " selected" : ""}>${label}</option>`).join("");
+      roleSelect = `<select class="role" data-c="${c}" aria-label="${c + 1}列目の役割" ${c === 1 ? "disabled title='最初の Y の列は系列です'" : ""}>${opts}</select>`;
+    }
+    html += `<th class="role-${role}"><span class="colname">${columnCaption(c, groups)}</span>`
+      + `<input data-r="-1" data-c="${c}" value="${escapeHtml(name)}" maxlength="100" aria-label="${c + 1}列目の見出し">${roleSelect}</th>`;
   });
   html += "</tr></thead><tbody>";
   table.rows.forEach((row, r) => {
@@ -147,7 +224,8 @@ function renderGrid() {
     for (let c = 0; c < nCols; c++) {
       const v = row[c] ?? "";
       const bad = cellIsValid(r, c, v) ? "" : "invalid";
-      html += `<td><input class="${bad}" data-r="${r}" data-c="${c}" value="${escapeHtml(v)}" maxlength="50"></td>`;
+      const role = c === 0 ? "x" : table.roles[c - 1];
+      html += `<td class="role-${role}"><input class="${bad}" data-r="${r}" data-c="${c}" value="${escapeHtml(v)}" maxlength="50"></td>`;
     }
     html += "</tr>";
   });
@@ -176,11 +254,21 @@ function setCell(r, c, value) {
 
 $("grid").addEventListener("input", (e) => {
   const el = e.target;
+  if (el.matches("select.role")) return;
   const r = Number(el.dataset.r), c = Number(el.dataset.c);
   setCell(r, c, el.value);
   if (r >= 0) el.classList.toggle("invalid", !cellIsValid(r, c, el.value));
   if (r < 0) renderSeriesList(); // 見出しが変わったら系列パネルの名前も更新
   onDataChanged();
+});
+
+// 列の役割を変える
+$("grid").addEventListener("change", (e) => {
+  const el = e.target;
+  if (!el.matches("select.role")) return;
+  table.roles[Number(el.dataset.c) - 1] = el.value;
+  fixSeriesErrors(true);
+  renderAllData();
 });
 
 $("grid").addEventListener("focusin", (e) => {
@@ -193,7 +281,7 @@ $("grid").addEventListener("focusin", (e) => {
 // Enter / ↑ / ↓ で上下のセルへ移動（最後の行で Enter を押すと行を追加）
 $("grid").addEventListener("keydown", (e) => {
   const el = e.target;
-  if (el.dataset.r === undefined || e.isComposing) return;
+  if (el.dataset.r === undefined || el.tagName !== "INPUT" || e.isComposing) return;
   const r = Number(el.dataset.r), c = Number(el.dataset.c);
   let next = null;
   if (e.key === "Enter") next = e.shiftKey ? r - 1 : r + 1;
@@ -201,7 +289,7 @@ $("grid").addEventListener("keydown", (e) => {
   else if (e.key === "ArrowUp") next = r - 1;
   if (next === null) return;
   e.preventDefault();
-  if (next >= table.rows.length && e.key === "Enter") {
+  if (next >= table.rows.length && e.key === "Enter" && table.rows.length < MAX_ROWS) {
     table.rows.push(new Array(table.columns.length).fill(""));
     renderGrid();
     onDataChanged();
@@ -212,7 +300,7 @@ $("grid").addEventListener("keydown", (e) => {
 // Excel からのコピー（タブ区切り・改行区切り）を貼り付け
 $("grid").addEventListener("paste", (e) => {
   const el = e.target;
-  if (el.dataset.r === undefined) return;
+  if (el.dataset.r === undefined || el.tagName !== "INPUT") return;
   const text = (e.clipboardData || window.clipboardData).getData("text");
   if (!/[\t\n]/.test(text.replace(/[\r\n]+$/, ""))) return; // 値 1 つだけなら普通に貼り付け
   e.preventDefault();
@@ -222,32 +310,42 @@ $("grid").addEventListener("paste", (e) => {
 
 function pasteBlock(r0, c0, lines) {
   const width = Math.max(...lines.map((l) => l.length));
-  const maxCols = 11;
-  if (c0 + width > maxCols) showMessages([`列は ${maxCols} 列（系列 10 個）までなので，はみ出した分は捨てました`], "warn");
-  while (table.columns.length < Math.min(c0 + width, maxCols)) addColumnRaw();
-  // 見出し行（r0 = -1）から貼ると，1 行目は見出しになるので，データは lines.length - 1 行
-  const needRows = Math.min(r0 + lines.length, 2000);
+  if (c0 + width > MAX_COLS) showMessages([`列は ${MAX_COLS} 列（Y 10 列）までなので，はみ出した分は捨てました`], "warn");
+  const oldCols = table.columns.length;
+  while (table.columns.length < Math.min(c0 + width, MAX_COLS)) addColumnRaw();
+  // 見出し行（r0 = -1）から貼ると，1 行目は見出しになる
+  const needRows = Math.min(r0 + lines.length, MAX_ROWS);
   while (table.rows.length < needRows) table.rows.push(new Array(table.columns.length).fill(""));
   lines.forEach((cells, i) => {
-    if (r0 + i >= 2000) return;
-    cells.forEach((v, j) => { if (c0 + j < maxCols) setCell(r0 + i, c0 + j, v.trim()); });
+    if (r0 + i >= MAX_ROWS) return;
+    cells.forEach((v, j) => { if (c0 + j < MAX_COLS) setCell(r0 + i, c0 + j, v.trim()); });
   });
   syncSeries();
+  if (r0 < 0) { // 見出しごと貼ったときは，見出しから列の役割を推測する
+    for (let c = Math.max(1, c0); c < table.columns.length; c++) {
+      if (c >= oldCols || c < c0 + width) table.roles[c - 1] = guessRole(table.columns[c], c - 1);
+    }
+    fixSeriesErrors(true);
+    restyle();
+  }
   renderAllData();
 }
 
-function addRow() {
-  if (table.rows.length >= 2000) return showMessages(["データは 2000 行までです"], "error");
-  const at = table.current.r >= 0 ? table.current.r + 1 : table.rows.length;
+function insertRow(at) {
+  if (table.rows.length >= MAX_ROWS) return showMessages([`データは ${MAX_ROWS} 行までです`], "error");
   table.rows.splice(at, 0, new Array(table.columns.length).fill(""));
   table.current.r = at;
   renderAllData();
   focusCell(at, Math.max(0, table.current.c));
 }
 
-function deleteRow() {
+function addRow() {
+  insertRow(table.current.r >= 0 ? table.current.r + 1 : table.rows.length);
+}
+
+function deleteRow(r = null) {
   if (table.rows.length <= 1) return;
-  const r = table.current.r >= 0 && table.current.r < table.rows.length ? table.current.r : table.rows.length - 1;
+  if (r === null) r = table.current.r >= 0 && table.current.r < table.rows.length ? table.current.r : table.rows.length - 1;
   table.rows.splice(r, 1);
   table.current.r = Math.min(r, table.rows.length - 1);
   renderAllData();
@@ -259,20 +357,33 @@ function addColumnRaw() {
   table.rows.forEach((row) => row.push(""));
 }
 
-function addColumn() {
-  if (table.columns.length >= 11) return showMessages(["系列は 10 個までです"], "error");
-  addColumnRaw();
+function insertColumn(at) {
+  if (table.columns.length >= MAX_COLS) return showMessages(["Y の列は 10 列までです"], "error");
+  at = Math.max(1, Math.min(at, table.columns.length));
+  table.columns.splice(at, 0, `系列${table.columns.length}`);
+  table.rows.forEach((row) => row.splice(at, 0, ""));
+  table.roles.splice(at - 1, 0, "series");
+  S.series.splice(at - 1, 0, seriesStyleFor(S.preset, at - 1));
   syncSeries();
+  fixSeriesErrors();
   renderAllData();
 }
 
-function deleteColumn() {
+function addColumn() {
+  insertColumn(table.current.c >= 0 ? table.current.c + 1 : table.columns.length);
+}
+
+function deleteColumn(c = null) {
   if (table.columns.length <= 2) return showMessages(["X と Y の 2 列は必要です"], "warn");
-  const c = table.current.c >= 1 ? table.current.c : table.columns.length - 1;
+  if (c === null) c = table.current.c >= 1 ? table.current.c : table.columns.length - 1;
+  if (c < 1) return showMessages(["X の列は削除できません"], "warn");
   table.columns.splice(c, 1);
   table.rows.forEach((row) => row.splice(c, 1));
+  table.roles.splice(c - 1, 1);
   S.series.splice(c - 1, 1);
   table.current.c = Math.min(c, table.columns.length - 1);
+  syncSeries();
+  fixSeriesErrors();
   renderAllData();
 }
 
@@ -288,8 +399,39 @@ function renderAllData() {
   onDataChanged();
 }
 
+// ----- 右クリックメニュー（行・列の挿入と削除） -----
+let ctxCell = null;
+$("grid").addEventListener("contextmenu", (e) => {
+  const el = e.target.closest("[data-r]");
+  if (!el || el.tagName !== "INPUT") return;
+  e.preventDefault();
+  ctxCell = { r: Number(el.dataset.r), c: Number(el.dataset.c) };
+  table.current = { ...ctxCell };
+  markCurrentRow();
+  const menu = $("ctx-menu");
+  menu.querySelectorAll("[data-act^='row']").forEach((b) => (b.disabled = ctxCell.r < 0 && b.dataset.act !== "row-below"));
+  menu.querySelector("[data-act='row-delete']").disabled = ctxCell.r < 0 || table.rows.length <= 1;
+  menu.querySelector("[data-act='col-delete']").disabled = ctxCell.c < 1 || table.columns.length <= 2;
+  menu.querySelector("[data-act='col-right']").disabled = table.columns.length >= MAX_COLS;
+  openMenu(menu, null);
+  const w = menu.offsetWidth, h = menu.offsetHeight;
+  menu.style.left = `${Math.min(e.clientX, innerWidth - w - 8)}px`;
+  menu.style.top = `${Math.min(e.clientY, innerHeight - h - 8)}px`;
+});
+
+$("ctx-menu").addEventListener("click", (e) => {
+  const act = e.target.dataset.act;
+  if (!act || !ctxCell) return;
+  closeMenus();
+  const { r, c } = ctxCell;
+  if (act === "row-above") insertRow(Math.max(0, r));
+  else if (act === "row-below") insertRow(r + 1);
+  else if (act === "row-delete") deleteRow(r);
+  else if (act === "col-right") insertColumn(c + 1);
+  else if (act === "col-delete") deleteColumn(c);
+});
+
 // ----- CSV の読み込み（UTF-8 と Shift_JIS に対応） -----
-$("csv-open").addEventListener("click", () => $("csv-file").click());
 $("csv-file").addEventListener("change", async (e) => {
   const file = e.target.files[0];
   e.target.value = "";
@@ -330,42 +472,27 @@ function loadDelimitedText(text, name) {
   const delim = firstLine.includes("\t") ? "\t" : firstLine.includes(",") ? "," : ";";
   const rows = parseCSV(text, delim).map((r) => r.map((c) => c.trim()));
   if (rows.length === 0) return showMessages(["ファイルにデータがありません"], "error");
-  const width = Math.min(11, Math.max(2, ...rows.map((r) => r.length)));
+  const width = Math.min(MAX_COLS, Math.max(2, ...rows.map((r) => r.length)));
   // 1 行目に数値でないセルがあれば，見出し行とみなす
   const hasHeader = rows[0].slice(1).some((c) => !isNumberLike(c)) || !isNumberLike(rows[0][0] ?? "");
   const header = hasHeader ? rows.shift() : [];
   table.columns = Array.from({ length: width }, (_, c) => header[c] || (c === 0 ? "X" : `系列${c}`));
-  table.rows = rows.slice(0, 2000).map((r) => Array.from({ length: width }, (_, c) => r[c] ?? ""));
+  table.rows = rows.slice(0, MAX_ROWS).map((r) => Array.from({ length: width }, (_, c) => r[c] ?? ""));
   if (table.rows.length === 0) table.rows.push(new Array(width).fill(""));
+  table.roles = table.columns.slice(1).map((n, i) => guessRole(n, i));
   table.current = { r: 0, c: 0 };
   syncSeries();
+  fixSeriesErrors(true);
+  restyle();
   renderAllData();
   const notes = [`${name} を読み込みました（${table.rows.length} 行 × ${width} 列）`];
-  if (rows.length > 2000) notes.push("2000 行を超えた分は読み込んでいません");
+  if (rows.length > MAX_ROWS) notes.push(`${MAX_ROWS} 行を超えた分は読み込んでいません`);
   showMessages(notes, "info");
 }
 
 // ============================================================
-//  4. 設定パネル ⇔ 設定オブジェクト S
+//  4. 設定パネル ⇔ 設定オブジェクト S（data-bind 属性でつなぐ）
 // ============================================================
-// [要素の id, S の中の場所, 種類]
-const BINDINGS = [
-  ["title-show", "title.show", "bool"], ["title-text", "title.text", "text"],
-  ["legend-show", "legend.show", "bool"], ["legend-loc", "legend.loc", "text"], ["legend-frame", "legend.frame", "bool"],
-  ["labels-show", "data_labels.show", "bool"], ["labels-decimals", "data_labels.decimals", "int"],
-  ["x-label-show", "x_axis.show_label", "bool"], ["x-label", "x_axis.label", "text"],
-  ["x-min", "x_axis.min", "optnum"], ["x-max", "x_axis.max", "optnum"], ["x-step", "x_axis.step", "optnum"],
-  ["x-log", "x_axis.log", "bool"],
-  ["y-label-show", "y_axis.show_label", "bool"], ["y-label", "y_axis.label", "text"],
-  ["y-min", "y_axis.min", "optnum"], ["y-max", "y_axis.max", "optnum"], ["y-step", "y_axis.step", "optnum"],
-  ["y-log", "y_axis.log", "bool"], ["y-zero", "y_axis.start_zero", "bool"],
-  ["grid-mode", "grid", "text"], ["tick-dir", "tick_direction", "text"], ["frame", "frame", "text"],
-  ["axis-color", "axis_color", "text"], ["outer-border", "outer_border", "bool"],
-  ["font-latin", "font.latin", "text"], ["font-jp", "font.jp", "text"], ["font-size", "font.size", "num"],
-  ["width", "size.width_mm", "num"], ["height", "size.height_mm", "num"],
-  ["dpi", "output.dpi", "int"], ["background", "output.transparent", "bg"],
-];
-
 function getPath(obj, path) { return path.split(".").reduce((o, k) => o[k], obj); }
 function setPath(obj, path, v) {
   const keys = path.split(".");
@@ -373,51 +500,81 @@ function setPath(obj, path, v) {
   keys.reduce((o, k) => o[k], obj)[last] = v;
 }
 
+// 文字列 → 設定の値（data-kind で種類を決める）
+function parseValue(raw, kind) {
+  if (kind === "bool") return raw === true || raw === "true";
+  if (kind === "num") return raw === "" ? null : Number(raw);
+  if (kind === "optnum") return String(raw).trim() === "" ? null : Number(raw);
+  if (kind === "int") return raw === "" ? null : parseInt(raw, 10);
+  if (kind === "optint") return raw === "" ? null : parseInt(raw, 10);
+  return raw;
+}
+
+function boundControls() {
+  return document.querySelectorAll("[data-bind]");
+}
+
 function stateToUI() {
-  for (const [id, path, kind] of BINDINGS) {
-    const el = $(id), v = getPath(S, path);
-    if (kind === "bool") el.checked = v;
-    else if (kind === "bg") el.value = v ? "transparent" : "white";
-    else el.value = v ?? "";
+  for (const el of boundControls()) {
+    const v = getPath(S, el.dataset.bind);
+    if (el.tagName === "DIV") { // 切り替えボタンの組
+      el.querySelectorAll("button[data-value]").forEach((b) => b.classList.toggle("active", b.dataset.value === String(v)));
+    } else if (el.type === "checkbox") {
+      el.checked = !!v;
+    } else {
+      el.value = v ?? "";
+    }
   }
-  document.querySelectorAll("#chart-types button").forEach((b) => b.classList.toggle("active", b.dataset.type === S.chart_type));
   renderSeriesList();
   updateEnabled();
 }
 
-function uiToState() {
-  for (const [id, path, kind] of BINDINGS) {
-    const el = $(id);
-    let v;
-    if (kind === "bool") v = el.checked;
-    else if (kind === "bg") v = el.value === "transparent";
-    else if (kind === "optnum") v = el.value.trim() === "" ? null : Number(el.value);
-    else if (kind === "num") v = el.value.trim() === "" ? null : Number(el.value);
-    else if (kind === "int") v = el.value.trim() === "" ? null : parseInt(el.value, 10);
-    else v = el.value;
-    setPath(S, path, v);
-  }
+function onControlChange(el) {
+  const kind = el.dataset.kind || (el.type === "checkbox" ? "bool" : "text");
+  const raw = el.type === "checkbox" ? el.checked : el.value;
+  setPath(S, el.dataset.bind, parseValue(raw, kind));
+  afterSettingChange(el.dataset.bind);
 }
 
-// 今の設定では使えない項目を灰色にする
+function afterSettingChange(path) {
+  if (path === "chart_type") {
+    renderGrid();        // 折れ線・棒では X に文字を使えるので，赤い表示を付け直す
+    renderSeriesList();  // 線・マーカー・近似曲線の使える／使えないが変わる
+  }
+  updateEnabled();
+  scheduleUpdate(path === "chart_type" ? 0 : 400);
+}
+
+// 今の設定では使えない項目を薄くする
 function updateEnabled() {
-  const ct = S.chart_type;
+  const setOff = (el, off) => {
+    if (!el) return;
+    el.classList.toggle("is-off", off);
+    el.querySelectorAll?.("input, select, button").forEach((c) => (c.disabled = off));
+    if (el.matches("input, select")) el.disabled = off;
+  };
   const xNum = !xIsCategory();
-  document.querySelectorAll(".x-range input").forEach((el) => (el.disabled = !xNum));
-  $("x-step").disabled = !xNum || S.x_axis.log;
+  document.querySelectorAll(".x-num").forEach((el) => setOff(el, !xNum));
+  if (xNum) $("x-step").disabled = S.x_axis.log;
   $("y-step").disabled = S.y_axis.log;
-  $("y-zero").disabled = S.y_axis.log;
-  $("title-text").disabled = !S.title.show;
-  $("legend-loc").disabled = $("legend-frame").disabled = !S.legend.show;
-  $("labels-decimals").disabled = !S.data_labels.show;
-  $("x-label").disabled = !S.x_axis.show_label;
-  $("y-label").disabled = !S.y_axis.show_label;
+  setOff($("y-zero").closest("label"), S.y_axis.log);
+  setOff($("title-text"), !S.title.show);
+  setOff(document.querySelector(".legend-opts"), !S.legend.show);
+  setOff(document.querySelector(".labels-opts"), !S.data_labels.show);
+  setOff($("x-label"), !S.x_axis.show_label);
+  setOff($("y-label"), !S.y_axis.show_label);
+  $("x-cat-note").textContent = xNum ? "" : "折れ線・棒グラフでは X は項目名なので，範囲や目盛りの設定は使いません．";
   $("chart-note").textContent = {
     scatter: "X を数値として扱い，点だけを打ちます．",
-    scatter_line: "X を数値として扱い，点を直線で結びます．実験データの基本です．",
+    scatter_line: "X を数値として扱い，点を線で結びます．実験データの基本です．",
     line: "X を「項目」として等間隔に並べます（Excel の折れ線と同じ）．X に文字も使えます．",
     bar: "X を「項目」として等間隔に並べます．X に文字も使えます．",
-  }[ct];
+  }[S.chart_type];
+  setOff($("dpi-field"), S.output.format !== "png");
+  $("save-note").textContent = S.output.format === "png"
+    ? "Word に貼るなら 300 dpi 以上がおすすめです．"
+    : "SVG・PDF は拡大しても荒れません（解像度の設定は使いません）．";
+  $("save-main").textContent = `${S.output.format.toUpperCase()} を保存`;
   updateLabelHints();
   updatePreviewInfo();
 }
@@ -431,8 +588,9 @@ function updateLabelHints() {
     el.textContent = ok ? `表示: ${effective}` : `表示: ${effective} — 単位は「電圧 [V]」のように [ ] で書くのがおすすめです`;
     el.classList.toggle("warn", !ok);
   };
+  const groups = seriesGroups();
   const xAuto = table.columns[0] || "";
-  const yAuto = table.columns.length === 2 ? table.columns[1] : "";
+  const yAuto = groups.length === 1 ? groups[0].name : "";
   hint("x-label-hint", S.x_axis.label.trim() || xAuto, S.x_axis.show_label);
   hint("y-label-hint", S.y_axis.label.trim() || yAuto, S.y_axis.show_label);
 }
@@ -440,9 +598,12 @@ function updateLabelHints() {
 function updatePreviewInfo() {
   const { width_mm: w, height_mm: h } = S.size;
   const px = (mm) => Math.round((mm / 25.4) * S.output.dpi);
-  $("preview-info").textContent = (w && h)
-    ? `実寸 ${w} × ${h} mm（PNG ${S.output.dpi} dpi なら ${px(w)} × ${px(h)} px）`
-    : "";
+  let text = "";
+  if (w && h) {
+    text = `${w} × ${h} mm`;
+    if (S.output.format === "png") text += `・${S.output.dpi} dpi で ${px(w)} × ${px(h)} px`;
+  }
+  $("preview-info").textContent = text;
   $("preview-box").classList.toggle("transparent", S.output.transparent);
 }
 
@@ -450,6 +611,8 @@ function updatePreviewInfo() {
 const LINESTYLES = [["-", "実線"], ["--", "破線"], [":", "点線"], ["-.", "一点鎖線"], ["none", "なし"]];
 const MARKERS = [["o", "● 丸"], ["s", "■ 四角"], ["^", "▲ 上三角"], ["v", "▼ 下三角"], ["D", "◆ ひし形"],
   ["x", "× バツ"], ["+", "＋ プラス"], ["*", "★ 星"], ["none", "なし"]];
+const TRENDS = [["none", "なし"], ["linear", "直線（1 次式）"], ["poly2", "2 次式"], ["poly3", "3 次式"],
+  ["exp", "指数 y = a·e^(bx)"], ["log", "対数 y = a·ln x + b"], ["power", "累乗 y = a·x^b"]];
 
 function options(list, selected) {
   return list.map(([v, label]) => `<option value="${v}"${v === selected ? " selected" : ""}>${label}</option>`).join("");
@@ -460,30 +623,61 @@ function renderSeriesList() {
   const ct = S.chart_type;
   const noLine = ct === "scatter" || ct === "bar";
   const noMarker = ct === "bar";
-  $("series-list").innerHTML = S.series.map((st, i) => `
+  const noTrend = ct === "line" || ct === "bar";
+  const dis = (off) => (off ? "disabled" : "");
+  $("series-list").innerHTML = seriesGroups().map((g) => {
+    const i = g.col - 1;
+    const st = S.series[i];
+    const errors = [["none", "なし"], ["fixed", "固定値 ±"], ["percent", "割合 ±%"]];
+    if (g.errorCol !== null) errors.splice(1, 0, ["column", `誤差の列（${table.columns[g.errorCol] || "誤差"}）`]);
+    if (g.repeats.length) errors.splice(1, 0, ["sd", `標準偏差（${g.repeats.length + 1} 回の測定）`], ["se", "標準誤差（標準偏差 / √n）"]);
+    const meta = [g.repeats.length ? `${g.repeats.length + 1} 回の平均` : "", g.errorCol !== null ? "誤差の列あり" : ""]
+      .filter(Boolean).join("・");
+    const needValue = st.error === "fixed" || st.error === "percent";
+    return `
     <div class="series-card" data-i="${i}">
-      <div class="series-name">
-        <input type="color" data-k="color" value="${st.color}" title="色">
-        <span>${escapeHtml(table.columns[i + 1] || `系列${i + 1}`)}</span>
+      <div class="series-head">
+        <input type="color" data-k="color" value="${st.color}" aria-label="色">
+        <span class="series-title">${escapeHtml(g.name)}</span>
+        <span class="series-meta">${escapeHtml(meta)}</span>
       </div>
       <div class="grid2">
-        <label>線の種類<select data-k="linestyle" ${noLine ? "disabled" : ""}>${options(LINESTYLES, st.linestyle)}</select></label>
-        <label>線の太さ [pt]<input type="number" data-k="line_width" value="${st.line_width}" min="0" max="10" step="0.25" ${noLine ? "disabled" : ""}></label>
-        <label>マーカー<select data-k="marker" ${noMarker ? "disabled" : ""}>${options(MARKERS, st.marker)}</select></label>
-        <label>大きさ [pt]<input type="number" data-k="marker_size" value="${st.marker_size}" min="0" max="30" step="0.5" ${noMarker ? "disabled" : ""}></label>
+        <label>線<select data-k="linestyle" ${dis(noLine)}>${options(LINESTYLES, st.linestyle)}</select></label>
+        <label>太さ [pt]<input type="number" data-k="line_width" value="${st.line_width}" min="0" max="10" step="0.25" ${dis(noLine)}></label>
+        <label>マーカー<select data-k="marker" ${dis(noMarker)}>${options(MARKERS, st.marker)}</select></label>
+        <label>大きさ [pt]<input type="number" data-k="marker_size" value="${st.marker_size}" min="0" max="30" step="0.5" ${dis(noMarker)}></label>
       </div>
-      <label class="check"><input type="checkbox" data-k="marker_fill" ${st.marker_fill ? "checked" : ""} ${noMarker ? "disabled" : ""}> マーカーを塗りつぶす（外すと白抜き）</label>
-    </div>`).join("");
+      <label class="switch-row">マーカーを塗りつぶす<input type="checkbox" class="switch" data-k="marker_fill" ${st.marker_fill ? "checked" : ""} ${dis(noMarker)}></label>
+      <p class="sub-title">誤差棒</p>
+      <div class="grid2">
+        <label>種類<select data-k="error">${options(errors, st.error)}</select></label>
+        <label class="${needValue ? "" : "is-off"}">${st.error === "percent" ? "割合 [%]" : "大きさ ±"}
+          <input type="number" data-k="error_value" value="${st.error_value}" min="0" step="any" ${dis(!needValue)}></label>
+      </div>
+      <p class="sub-title">近似曲線${noTrend ? "（散布図のときだけ）" : ""}</p>
+      <label>種類<select data-k="trend" ${dis(noTrend)}>${options(TRENDS, st.trend)}</select></label>
+      <div class="grid2 ${st.trend === "none" || noTrend ? "is-off" : ""}">
+        <label class="inline-switch">式<input type="checkbox" class="switch" data-k="trend_equation" ${st.trend_equation ? "checked" : ""} ${dis(st.trend === "none" || noTrend)}></label>
+        <label class="inline-switch">R²<input type="checkbox" class="switch" data-k="trend_r2" ${st.trend_r2 ? "checked" : ""} ${dis(st.trend === "none" || noTrend)}></label>
+      </div>
+    </div>`;
+  }).join("");
 }
 
 $("series-list").addEventListener("input", (e) => {
   const card = e.target.closest(".series-card");
-  if (!card) return;
+  if (!card || !e.target.dataset.k) return;
   const st = S.series[Number(card.dataset.i)];
   const k = e.target.dataset.k;
   if (e.target.type === "checkbox") st[k] = e.target.checked;
   else if (e.target.type === "number") st[k] = e.target.value === "" ? 0 : Number(e.target.value);
   else st[k] = e.target.value;
+  // 誤差棒・近似曲線の種類を変えたら，関係する入力欄の使える／使えないを更新する
+  if (k === "error" || k === "trend") {
+    const focusKey = k;
+    renderSeriesList();
+    $("series-list").querySelector(`.series-card[data-i="${card.dataset.i}"] [data-k="${focusKey}"]`)?.focus();
+  }
   scheduleUpdate();
 });
 
@@ -505,7 +699,7 @@ function scheduleUpdate(delay = 400) {
 
 function collectSettings() {
   const { preset, ...rest } = S;
-  return { ...rest, data: { columns: table.columns, rows: table.rows } };
+  return { ...rest, data: { columns: table.columns, rows: table.rows, roles: table.roles } };
 }
 
 // ============================================================
@@ -644,11 +838,11 @@ function escapeHtml(s) {
 }
 
 // ============================================================
-//  6. ダウンロード
+//  6. 保存
 // ============================================================
-async function download(format) {
+async function download() {
   const settings = collectSettings();
-  settings.output = { ...settings.output, format };
+  const format = settings.output.format;
   setStatus(`${format.toUpperCase()} を作成しています`, "busy");
   let result;
   try {
@@ -675,6 +869,10 @@ function saveBlob(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
+function savePython() {
+  saveBlob(new Blob([currentCode], { type: "text/x-python;charset=utf-8" }), "graph.py");
+}
+
 // ============================================================
 //  7. Python コードの表示（簡易シンタックスハイライト）
 // ============================================================
@@ -684,7 +882,7 @@ const PY_KEYWORDS = new Set(["import", "from", "as", "def", "return", "for", "in
 const PY_BUILTINS = new Set(["print", "len", "range", "enumerate", "zip", "min", "max", "list", "dict", "str", "int", "float"]);
 
 function highlightPython(code) {
-  const re = /("""[\s\S]*?"""|'''[\s\S]*?''')|(#[^\n]*)|("(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*')|\b(\d+(?:\.\d*)?(?:[eE][-+]?\d+)?)\b|\b([A-Za-z_]\w*)\b/g;
+  const re = /("""[\s\S]*?"""|'''[\s\S]*?''')|(#[^\n]*)|((?:rf|fr|f|r)?"(?:\\.|[^"\\\n])*"|(?:rf|fr|f|r)?'(?:\\.|[^'\\\n])*')|\b(\d+(?:\.\d*)?(?:[eE][-+]?\d+)?)\b|\b([A-Za-z_]\w*)\b/g;
   let out = "", last = 0, m, prevWord = "";
   while ((m = re.exec(code))) {
     out += escapeHtml(code.slice(last, m.index));
@@ -717,7 +915,7 @@ function showCode(code) {
   }
 }
 
-// コードが上から流れるように現れる（末尾で黒丸が明滅する）
+// コードが上から流れるように現れる（末尾で丸が明滅する）
 function streamCode() {
   cancelAnimationFrame(streamFrame);
   streamFrame = null;
@@ -743,11 +941,14 @@ function streamCode() {
   streamFrame = requestAnimationFrame(step);
 }
 
-$("code-toggle").addEventListener("click", () => {
-  const open = $("code-panel").classList.toggle("open");
+function setCodeOpen(open) {
+  $("code-panel").classList.toggle("open", open);
   $("code-toggle").setAttribute("aria-expanded", String(open));
-  if (open) streamCode();
-});
+  if (open) {
+    streamCode();
+    if (innerWidth <= 860) setTimeout(() => $("code-panel").scrollIntoView({ behavior: "smooth", block: "end" }), 50);
+  }
+}
 
 $("code-copy").addEventListener("click", async () => {
   try {
@@ -758,10 +959,6 @@ $("code-copy").addEventListener("click", async () => {
   }
 });
 
-$("code-save").addEventListener("click", () => {
-  saveBlob(new Blob([currentCode], { type: "text/x-python;charset=utf-8" }), "graph.py");
-});
-
 function flash(button, text) {
   const old = button.textContent;
   button.textContent = text;
@@ -769,11 +966,58 @@ function flash(button, text) {
 }
 
 // ============================================================
-//  8. 前回の内容を覚えておく（このブラウザの中だけ）
+//  8. メニュー（保存の設定・その他）とタブ
+// ============================================================
+function closeMenus(except = null) {
+  document.querySelectorAll(".popover").forEach((p) => { if (p !== except) p.hidden = true; });
+  document.querySelectorAll("[data-menu]").forEach((b) => {
+    if (!except || b.dataset.menu !== except.id) b.setAttribute("aria-expanded", "false");
+  });
+}
+
+function openMenu(menu, button) {
+  closeMenus(menu);
+  menu.hidden = false;
+  button?.setAttribute("aria-expanded", "true");
+}
+
+document.addEventListener("click", (e) => {
+  const opener = e.target.closest("[data-menu]");
+  if (opener) {
+    const menu = $(opener.dataset.menu);
+    if (menu.hidden) openMenu(menu, opener);
+    else closeMenus();
+    return;
+  }
+  // メニューの外を押したら閉じる（保存の設定の中の操作では閉じない）
+  if (!e.target.closest(".popover")) closeMenus();
+  else if (e.target.closest(".menu-item")) closeMenus();
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  closeMenus();
+  if ($("code-panel").classList.contains("open")) setCodeOpen(false);
+});
+
+function showTab(name) {
+  document.querySelectorAll(".tabs [data-tab]").forEach((b) => {
+    const on = b.dataset.tab === name;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-selected", String(on));
+  });
+  document.querySelectorAll(".tab-panel").forEach((p) => (p.hidden = p.dataset.panel !== name));
+  try { localStorage.setItem(UI_KEY, JSON.stringify({ tab: name })); } catch { /* 無視 */ }
+}
+
+// ============================================================
+//  9. 前回の内容を覚えておく（このブラウザの中だけ）
 // ============================================================
 function saveToStorage() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ columns: table.columns, rows: table.rows, settings: S }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      columns: table.columns, rows: table.rows, roles: table.roles, settings: S,
+    }));
   } catch { /* 保存できなくても動作には影響しない */ }
 }
 
@@ -783,6 +1027,7 @@ function loadFromStorage() {
     if (!saved || !Array.isArray(saved.columns) || !Array.isArray(saved.rows)) return false;
     table.columns = saved.columns;
     table.rows = saved.rows;
+    table.roles = Array.isArray(saved.roles) ? saved.roles : [];
     const base = defaultSettings();
     deepMerge(base, saved.settings || {});
     base.series = Array.isArray(saved.settings?.series) ? saved.settings.series : [];
@@ -793,18 +1038,19 @@ function loadFromStorage() {
   }
 }
 
-$("reset-all").addEventListener("click", () => {
+function resetAll() {
   if (!confirm("データと設定をすべて最初の状態に戻します．よろしいですか？")) return;
   try { localStorage.removeItem(STORAGE_KEY); } catch { /* 無視 */ }
   table.columns = [...SAMPLE.columns];
   table.rows = SAMPLE.rows.map((r) => [...r]);
+  table.roles = ["series"];
   S = defaultSettings();
   applyPreset("report");
   renderAllData();
-});
+}
 
 // ============================================================
-//  9. 起動
+//  10. 起動
 // ============================================================
 async function loadFonts() {
   const JP_NAMES = {
@@ -813,34 +1059,47 @@ async function loadFonts() {
     "BIZ UDGothic": "BIZ UDゴシック", "BIZ UDMincho": "BIZ UD明朝", "Noto Sans CJK JP": "Noto Sans CJK JP",
     "Noto Serif CJK JP": "Noto Serif CJK JP", "MS Gothic": "MS ゴシック", "MS Mincho": "MS 明朝",
   };
-  const LATIN_NAMES = { "": "（日本語フォントと同じ）", "STIXGeneral": "STIX（Times 風）" };
+  const LATIN_NAMES = { "": "（日本語と同じ）", "STIXGeneral": "STIX（Times 風）" };
   fonts = await engine.start();
   $("font-latin").innerHTML = fonts.latin.map((f) => `<option value="${f}">${LATIN_NAMES[f] ?? f}</option>`).join("");
   $("font-jp").innerHTML = fonts.jp.map((f) => `<option value="${f}">${JP_NAMES[f] || f}</option>`).join("");
 }
 
 function wireEvents() {
-  const onSetting = () => { uiToState(); updateEnabled(); scheduleUpdate(); };
-  $("settings").querySelectorAll("[id]").forEach((el) => {
-    if (el.matches("input, select")) {
-      el.addEventListener("input", onSetting);
-      el.addEventListener("change", onSetting);
+  for (const el of boundControls()) {
+    if (el.tagName === "DIV") { // 切り替えボタンの組
+      el.addEventListener("click", (e) => {
+        const b = e.target.closest("button[data-value]");
+        if (!b || b.disabled) return;
+        setPath(S, el.dataset.bind, parseValue(b.dataset.value, el.dataset.kind));
+        el.querySelectorAll("button").forEach((x) => x.classList.toggle("active", x === b));
+        afterSettingChange(el.dataset.bind);
+      });
+    } else {
+      el.addEventListener("input", () => onControlChange(el));
+      el.addEventListener("change", () => onControlChange(el));
     }
-  });
-  $("chart-types").addEventListener("click", (e) => {
-    const type = e.target.dataset.type;
-    if (!type) return;
-    S.chart_type = type;
-    stateToUI();
-    renderGrid(); // 折れ線・棒では X に文字を使えるので，赤い表示を付け直す
-    scheduleUpdate(0);
-  });
+  }
   document.querySelectorAll("[data-preset]").forEach((b) => b.addEventListener("click", () => applyPreset(b.dataset.preset)));
-  document.querySelectorAll("[data-download]").forEach((b) => b.addEventListener("click", () => download(b.dataset.download)));
+  document.querySelectorAll("[data-size]").forEach((b) => b.addEventListener("click", () => {
+    const [w, h] = b.dataset.size.split("x").map(Number);
+    S.size = { width_mm: w, height_mm: h };
+    stateToUI();
+    scheduleUpdate(0);
+  }));
+  document.querySelectorAll(".tabs [data-tab]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+  $("save-main").addEventListener("click", download);
+  $("save-py").addEventListener("click", savePython);
+  $("code-save").addEventListener("click", savePython);
+  $("code-toggle").addEventListener("click", () => setCodeOpen(!$("code-panel").classList.contains("open")));
+  $("more-code").addEventListener("click", () => setCodeOpen(true));
+  $("code-close").addEventListener("click", () => setCodeOpen(false));
+  $("reset-all").addEventListener("click", resetAll);
   $("row-add").addEventListener("click", addRow);
-  $("row-del").addEventListener("click", deleteRow);
+  $("row-del").addEventListener("click", () => deleteRow());
   $("col-add").addEventListener("click", addColumn);
-  $("col-del").addEventListener("click", deleteColumn);
+  $("col-del").addEventListener("click", () => deleteColumn());
+  $("csv-open").addEventListener("click", () => $("csv-file").click());
   $("clear-data").addEventListener("click", clearData);
 }
 
@@ -851,15 +1110,20 @@ async function init() {
     setStatus("Python を準備しています", "busy");
   }
   wireEvents();
+  let tab = "chart";
+  try { tab = JSON.parse(localStorage.getItem(UI_KEY))?.tab || "chart"; } catch { /* 無視 */ }
+  showTab(tab);
   const restored = loadFromStorage();
   if (restored) {
     // 保存されていたフォントがこの PC に無ければ置き換える
     if (!fonts.jp.includes(S.font.jp)) S.font.jp = fonts.jp[0];
     if (!fonts.latin.includes(S.font.latin)) S.font.latin = "";
     syncSeries();
+    fixSeriesErrors();
     stateToUI();
     renderAllData();
   } else {
+    syncSeries();
     renderGrid();
     applyPreset("report"); // 初期状態はレポート用
   }

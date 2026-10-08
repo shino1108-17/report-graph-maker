@@ -209,3 +209,111 @@ def test_fonts_api_lists_bundled_font():
     res = client.get("/api/fonts")
     assert res.status_code == 200
     assert "IPAexGothic" in res.json()["jp"]
+
+
+# ------------------------------------------------------------ 誤差棒・繰り返し測定・近似曲線
+
+STATS = {
+    "columns": ["電圧 [V]", "電流 [mA]", "2回目", "3回目", "抵抗 [Ω]", "標準偏差"],
+    "roles": ["series", "repeat", "repeat", "series", "error"],
+    "rows": [["1", "1.0", "1.2", "0.9", "10", "0.5"], ["2", "2.1", "1.9", "2.2", "12", "0.6"],
+             ["3", "2.9", "3.2", "", "13", "0.4"], ["4", "4.2", "3.8", "4.1", "15", "0.8"]],
+}
+
+
+@pytest.mark.parametrize("chart_type", CHART_TYPES)
+@pytest.mark.parametrize("error", ["sd", "se"])
+def test_repeated_measurements_mean_and_error(tmp_path: Path, chart_type: str, error: str):
+    """繰り返し測定の平均と標準偏差（標準誤差）が，生成コードの中で正しく計算される．"""
+    body = sample(chart_type=chart_type, data=STATS,
+                  series=[{"error": error}, {}, {}, {"error": "column"}, {}])
+    res = client.post("/api/render", json=body)
+    assert res.status_code == 200, res.json()
+    code = res.json()["code"]
+    assert '"trials": [' in code and "ax.errorbar(" in code or "ax.bar(" in code
+
+    # 生成コードを実行して，計算結果を numpy で確かめる
+    ns: dict = {"__name__": "check"}
+    exec(compile(code, "graph.py", "exec"), ns)
+    s0 = ns["series"][0]
+    trials = np.array([[1.0, 2.1, 2.9, 4.2], [1.2, 1.9, 3.2, 3.8], [0.9, 2.2, np.nan, 4.1]])
+    assert np.allclose(s0["y"], np.nanmean(trials, axis=0))
+    sd = np.nanstd(trials, axis=0, ddof=1)
+    expected = sd if error == "sd" else sd / np.sqrt([3, 3, 2, 3])
+    assert np.allclose(s0["yerr"], expected)
+    assert ns["series"][1]["yerr"] == [0.5, 0.6, 0.4, 0.8]  # 「誤差」の列の値そのまま
+    ns["plt"].close("all")
+    # 単体で実行しても動く
+    (tmp_path / "graph.py").write_text(code, encoding="utf-8")
+    subprocess.run([sys.executable, "-W", "error::SyntaxWarning", "graph.py"], cwd=tmp_path, check=True,
+                   capture_output=True, timeout=120)
+
+
+@pytest.mark.parametrize("error, value", [("fixed", 0.3), ("percent", 10)])
+def test_fixed_and_percent_error_bars(error: str, value: float):
+    res = client.post("/api/render", json=sample(series=[{"error": error, "error_value": value}]))
+    assert res.status_code == 200, res.json()
+    assert "ax.errorbar(" in res.json()["code"]
+
+
+@pytest.mark.parametrize("trend", ["linear", "poly2", "poly3", "exp", "log", "power"])
+@pytest.mark.parametrize("legend", [True, False])
+def test_trendlines(tmp_path: Path, trend: str, legend: bool):
+    data = {"columns": ["X", "Y"], "rows": [[str(x), str(2.0 * x ** 1.5 + 1)] for x in range(1, 8)]}
+    body = sample(chart_type="scatter", data=data, legend={"show": legend},
+                  series=[{"trend": trend, "trend_equation": True, "trend_r2": True}])
+    res = client.post("/api/render", json=body)
+    assert res.status_code == 200, res.json()
+    code = res.json()["code"]
+    assert "def fit_trend" in code
+    assert not res.json()["warnings"]
+    (tmp_path / "graph.py").write_text(code, encoding="utf-8")
+    subprocess.run([sys.executable, "-W", "error::SyntaxWarning", "graph.py"], cwd=tmp_path, check=True,
+                   capture_output=True, timeout=120)
+
+
+def test_linear_trend_is_correct():
+    """直線近似の係数と R² が正しい（y = 2x + 1 にぴったり乗るデータ）．"""
+    data = {"columns": ["X", "Y"], "rows": [[str(x), str(2 * x + 1)] for x in range(5)]}
+    code = generate_code(GraphSettings(**sample(data=data, series=[{"trend": "linear"}])))
+    ns: dict = {"__name__": "check"}
+    exec(compile(code, "graph.py", "exec"), ns)
+    _, _, equation, r2 = ns["fit_trend"]("linear", ns["x"], ns["series"][0]["y"])
+    assert equation == "$y = 2x +1$"
+    assert r2 == pytest.approx(1.0)
+
+
+def test_trendline_is_ignored_for_category_charts():
+    res = client.post("/api/render", json=sample(chart_type="bar", series=[{"trend": "linear"}]))
+    assert res.status_code == 200
+    assert "fit_trend" not in res.json()["code"]
+
+
+def test_tick_options():
+    body = sample(minor_ticks=True, ticks_all_sides=True,
+                  x_axis={"tick_decimals": 0}, y_axis={"tick_decimals": 2, "start_zero": True})
+    code = client.post("/api/render", json=body).json()["code"]
+    assert "ax.minorticks_on()" in code
+    assert 'top=True, right=True' in code
+    assert "MaxNLocator(integer=True)" in code
+    assert 'FormatStrFormatter("%.2f")' in code
+
+
+@pytest.mark.parametrize(
+    "body, message",
+    [
+        (sample(series=[{"error": "column"}]), "誤差棒に使う列がありません"),
+        (sample(series=[{"error": "sd"}]), "繰り返し測定の列が必要です"),
+        (sample(data={**STATS, "roles": ["error"]}), "最初の Y の列"),
+        (sample(data={"columns": ["X", "Y", "e1", "e2"], "roles": ["series", "error", "error"],
+                      "rows": [["1", "2", "3", "4"]]}), "誤差」の列は1つまで"),
+        (sample(chart_type="scatter", series=[{"trend": "poly3"}]), "4 点以上"),
+        (sample(chart_type="scatter", data={"columns": ["X", "Y"], "rows": [["1", "-1"], ["2", "3"]]},
+                series=[{"trend": "exp"}]), "Y がすべて 0 より大きい"),
+        (sample(series=[{"error": "fixed", "error_value": -1}]), "0 以上"),
+    ],
+)
+def test_invalid_statistics_settings(body: dict, message: str):
+    res = client.post("/api/render", json=body)
+    assert res.status_code == 422
+    assert any(message in e for e in res.json()["errors"]), res.json()
